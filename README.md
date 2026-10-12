@@ -84,10 +84,6 @@ docker compose exec my-cloud /app/my-cloud --version
 
 If the GHCR package is private, authenticate once first:
 
-```bash
-echo "$GHCR_TOKEN" | docker login ghcr.io -u delharris1981 --password-stdin
-```
-
 ## Quick start (bare Go)
 
 ```bash
