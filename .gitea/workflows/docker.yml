@@ -29,10 +29,89 @@ env:
   IMAGE_NAME: delharris1981/my-cloud
 
 jobs:
+  detect:
+    # Decides whether the test suite has to run at all.
+    #
+    # Rebuilding for a docs or CI change does not need vet, the race detector,
+    # and the filesystem audit; skipping them saves several minutes per push.
+    #
+    # The gate is deliberately narrow and fails safe: anything that could
+    # affect the binary counts as core, and an unreadable diff, a missing
+    # parent commit, or a manual run all fall through to running the tests.
+    runs-on: ubuntu-latest
+    outputs:
+      core_changed: ${{ steps.decide.outputs.core_changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether the core changed
+        id: decide
+        run: |
+          set -eu
+
+          # Paths that can change what the binary does. Everything else is
+          # packaging, documentation, or CI configuration.
+          #
+          # dev-config-gen.js is listed because the end-to-end migration test
+          # executes it: if it changes, the test must run.
+          CORE='^(cmd|internal|web)/|^go\.(mod|sum)$|^dev-config-gen\.js$'
+
+          # A manual run is a deliberate "go and check this", so it always
+          # tests regardless of what changed.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "core_changed=true" >> "$GITHUB_OUTPUT"
+            echo "manual run: testing unconditionally"
+            exit 0
+          fi
+
+          BASE=$(git rev-parse --verify HEAD^ 2>/dev/null) || BASE=""
+          if [ -z "$BASE" ]; then
+            # First push, or a truncated clone. Failing safe means testing.
+            echo "core_changed=true" >> "$GITHUB_OUTPUT"
+            echo "no parent commit available; testing unconditionally"
+            exit 0
+          fi
+
+          if ! git diff --name-only "$BASE" HEAD > /tmp/changed.txt 2>/dev/null; then
+            echo "core_changed=true" >> "$GITHUB_OUTPUT"
+            echo "could not diff against $BASE; testing unconditionally"
+            exit 0
+          fi
+
+          echo "changed since $BASE:"
+          sed 's/^/  /' /tmp/changed.txt
+
+          if grep -qE "$CORE" /tmp/changed.txt; then
+            core=true
+            echo "core changed: running the full suite"
+          else
+            core=false
+            echo "core unchanged: the test suite can be skipped"
+          fi
+          echo "core_changed=$core" >> "$GITHUB_OUTPUT"
+
+          # Recorded either way. A silent skip is how CI rots: the next person
+          # to look sees green and cannot tell whether the tests ran.
+          {
+            echo "### Test suite"
+            if [ "$core" = "true" ]; then
+              echo "Ran in full."
+            else
+              echo "**Skipped.** Nothing under \`cmd/\`, \`internal/\`, \`web/\`, or the module files changed."
+              echo ""
+              sed 's/^/- /' /tmp/changed.txt
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+
   test:
     # Nothing is published until the code is proven: vet, tests under the race
     # detector, and the filesystem-access audit that enforces the vfs choke
     # point all have to pass first.
+    needs: detect
+    if: needs.detect.outputs.core_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,7 +168,14 @@ jobs:
           fi
 
   build:
-    needs: test
+    needs: [detect, test]
+    # always() is required because a skipped dependency would otherwise skip
+    # this job too. The condition then encodes the real rule: if the core
+    # was untouched the tests never ran, so the build proceeds; if it
+    # changed, the tests must have passed first.
+    if: >-
+      always() &&
+      (needs.detect.outputs.core_changed == 'false' || needs.test.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: read
