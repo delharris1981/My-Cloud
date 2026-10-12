@@ -359,31 +359,23 @@ jobs:
           VERSION=$(tr -d '[:space:]' < VERSION)
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$VERSION"
 
-          # Whatever fails below, the container's own output is the diagnosis.
-          # Print it on every exit path. The previous version only did so from
-          # the two branches that expected a mismatch, so the commonest
-          # failure — the server never coming up at all — reported nothing but
-          # "couldn't connect", which is what happened.
-          report() {
-            rc=$?
-            if [ "$rc" -ne 0 ]; then
-              echo "::group::container state"
-              docker ps -a --filter name=mc --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
-              echo "exit code: $(docker inspect -f '{{.State.ExitCode}}' mc 2>/dev/null || echo unknown)"
-              echo "state err: $(docker inspect -f '{{.State.Error}}' mc 2>/dev/null || echo none)"
-              echo "oom killed: $(docker inspect -f '{{.State.OOMKilled}}' mc 2>/dev/null || echo unknown)"
-              echo "::endgroup::"
-              echo "::group::container logs"
-              docker logs mc 2>&1 || echo "(the container produced no logs)"
-              echo "::endgroup::"
-              echo "::group::image"
-              docker image inspect "$IMAGE" --format 'arch={{.Architecture}} entrypoint={{.Config.Entrypoint}} user={{.Config.User}}' 2>&1 || echo "(image not present locally)"
-              echo "::endgroup::"
-              # If the container produced nothing useful, ask the image directly
-              # what it can do. Each of these is a way the runtime image can
-              # fail to serve, and they are cheap because nothing is left
-              # running afterwards.
-              echo "::group::probe"
+          # Every failure funnels through here. The previous version put the
+          # diagnosis in log groups *above* the error, which is where it was
+          # missed twice in a row: the last line visible was just the image
+          # summary. So the findings are emitted as ::error:: annotations too,
+          # which surface in the failure summary, and the whole block is
+          # repeated last so the tail of the log carries the answer.
+          diagnose() {
+            {
+              echo "reason: $1"
+              echo "image:  $(docker image inspect "$IMAGE" --format 'arch={{.Architecture}} entrypoint={{.Config.Entrypoint}} user={{.Config.User}}' 2>&1)"
+              echo "state:  $(docker ps -a --filter name=mc --format '{{.Status}}' 2>&1)"
+              echo "exit:   $(docker inspect -f '{{.State.ExitCode}}' mc 2>/dev/null || echo unknown)"
+              echo ""
+              echo "container logs:"
+              docker logs mc 2>&1 | tail -30
+              echo ""
+              echo "probe:"
               docker run --rm --entrypoint /bin/sh "$IMAGE" -c '
                 echo "running as: $(id)"
                 echo "su-exec:   $(command -v su-exec || echo NOT-ON-PATH)"
@@ -392,8 +384,32 @@ jobs:
                 echo "data:      $(su-exec 99:100 touch /data/.probe 2>&1 && echo writable || echo NOT-WRITABLE)"
                 echo "version as uid 99:"
                 su-exec 99:100 /app/my-cloud --version 2>&1 | head -3
-              ' 2>&1 || echo "(the probe could not run)"
+              ' 2>&1
+            } 2>&1
+          }
+
+          # Repeat the captured diagnosis as error annotations. A log group is
+          # easy to scroll past, and the failure summary is not.
+          announce() {
+            echo ""
+            echo "--- the lines above are the diagnosis, as error annotations ---"
+            tail -25 /tmp/diag.txt | while IFS= read -r line; do
+              if [ -n "$line" ]; then echo "::error::$line"; fi
+            done || true
+          }
+
+          # Set once the diagnosis has been taken, so the trap does not run a
+          # second probe container and duplicate the whole block.
+          diagnosed=
+
+          report() {
+            rc=$?
+            if [ "$rc" -ne 0 ] && [ -z "$diagnosed" ]; then
+              diagnose "the smoke test failed" > /tmp/diag.txt 2>&1 || true
+              echo "::group::diagnostics"
+              cat /tmp/diag.txt
               echo "::endgroup::"
+              announce
             fi
             docker rm -f mc >/dev/null 2>&1 || true
             exit "$rc"
@@ -409,12 +425,15 @@ jobs:
               up=1
               break
             fi
-            # Say so while waiting, so a hang is distinguishable from a crash.
             [ $((i % 10)) -eq 0 ] && echo "still waiting after ${i}s: $(docker inspect -f '{{.State.Status}}' mc 2>/dev/null || echo gone)"
             sleep 1
           done
+
           if [ -z "$up" ]; then
-            echo "::error::the server never answered /healthz within 30s"
+            diagnosed=1
+            diagnose "the server never answered /healthz within 30s" > /tmp/diag.txt 2>&1 || true
+            tail -25 /tmp/diag.txt
+            announce
             exit 1
           fi
 
@@ -422,7 +441,7 @@ jobs:
           # by, or the tag and the binary have drifted.
           inside=$(curl -fsS http://127.0.0.1:8686/api/version | grep -o '"version": *"[^"]*"' | head -1)
           echo "container reports $inside, expected $VERSION"
-          echo "$inside" | grep -q "$VERSION" || { echo "::error::version drift"; exit 1; }
+          echo "$inside" | grep -q "$VERSION" || { echo "::error::version drift: container has $inside, tag says $VERSION"; exit 1; }
 
           curl -fsS http://127.0.0.1:8686/api/status | grep -q '"needsSetup":true' \
             || { echo "::error::first boot should report needsSetup:true"; exit 1; }
@@ -431,7 +450,7 @@ jobs:
           # so this catches an image published for the wrong architecture.
           platform=$(curl -fsS http://127.0.0.1:8686/api/version | tr ',' '\n' | grep '"platform"')
           echo "container reports $platform, expected linux/amd64"
-          echo "$platform" | grep -q 'linux/amd64' || { echo "::error::wrong architecture"; exit 1; }
+          echo "$platform" | grep -q 'linux/amd64' || { echo "::error::wrong architecture: $platform"; exit 1; }
 
           echo "smoke test passed"
           docker logs mc
