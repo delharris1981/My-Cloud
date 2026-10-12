@@ -8,14 +8,27 @@ node_modules
 dev-config
 dev-data
 dev-config-gen.js
-config
-data
 .git
-templates
+
+# Runtime volumes. Anchored, like .gitignore, and for a sharper reason: the
+# build embeds web/templates and web/static via //go:embed. A reader who
+# assumed these bare names match at any depth — as .gitignore does — would
+# "tidy" them into excluding the embedded assets, and the failure would be a
+# confusing compile error rather than a clear missing path.
+#
+# Docker happens to treat a bare pattern as root-anchored, so these were never
+# wrong in practice. They are anchored so the file says what it means.
+/config
+/data
+/templates
+/docs
+/scripts
+
+# Not needed in any image.
 ca_profile.xml
 *.md
 docker-compose*.yml
 Dockerfile.node
+# The Node entrypoint. The Go image uses docker-entrypoint-go.sh, which must
+# stay in the context.
 docker-entrypoint.sh
-scripts
-docs

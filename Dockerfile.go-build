@@ -31,14 +31,19 @@ COPY VERSION ./VERSION
 # and `my-cloud --version` inside the container cannot drift apart.
 # -trimpath keeps build paths out of the binary; -s -w drop the symbol table.
 ARG VERSION=""
+ARG COMMIT=""
 RUN set -eux; \
     if [ -z "$VERSION" ]; then VERSION="$(tr -d '[:space:]' < VERSION)"; fi; \
-    echo "building my-cloud $VERSION"; \
+    # .git is excluded from the context, so `git rev-parse` cannot resolve a
+    # commit here and the binary would always report "none". CI passes the
+    # commit in as a build arg instead.
+    if [ -z "$COMMIT" ]; then COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo none)"; fi; \
+    echo "building my-cloud $VERSION ($COMMIT)"; \
     CGO_ENABLED=0 GOOS=linux go build \
       -trimpath \
       -ldflags="-s -w \
         -X github.com/derek/my-cloud/internal/version.Version=${VERSION} \
-        -X github.com/derek/my-cloud/internal/version.Commit=$(git rev-parse --short HEAD 2>/dev/null || echo none) \
+        -X github.com/derek/my-cloud/internal/version.Commit=${COMMIT} \
         -X github.com/derek/my-cloud/internal/version.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       -o /out/my-cloud ./cmd/my-cloud; \
     /out/my-cloud --version

@@ -136,6 +136,14 @@ jobs:
           ./scripts/check-docker-context.sh Dockerfile.go-build .dockerignore .
           ./scripts/check-docker-context.sh OLD/Dockerfile.node OLD/.dockerignore OLD
 
+      - name: Check the Docker base image accounts
+        # Alpine reserves GID 100 for `users`, which is the PGID this image
+        # defaults to. Creating a group there fails the image build with a
+        # bare "exit code: 1". Only the base image knows this, so the check
+        # downloads its minirootfs and reads the real /etc/passwd and
+        # /etc/group rather than guessing.
+        run: ./scripts/check-docker-base.sh Dockerfile.go-build
+
 
       - name: Verify CGO stays disabled
         # modernc.org/sqlite is pure Go precisely so the release binary is
@@ -192,10 +200,18 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          # Gitea's mirror of a GitHub repo has a shallow history by default;
-          # the full clone is needed to compare tags and decide whether this
-          # build is the newest release.
+
+      # These run here as well as in the test job, because the test job is
+      # skipped when the core is unchanged — and a Dockerfile change is exactly
+      # the kind of commit that skips it. Without this, fixing the Dockerfile
+      # would skip the very checks meant to validate the fix.
+      - name: Check the Dockerfile before building
+        run: |
+          ./scripts/check-docker-context.sh Dockerfile.go-build .dockerignore .
+          ./scripts/check-docker-base.sh Dockerfile.go-build        with:
+          # The full history is no longer needed to decide `latest`, which now
+          # comes from the registry, but it still makes a missing or wrong tag
+          # list obvious in the logs rather than ambiguous.
           fetch-depth: 0
 
       - uses: docker/setup-buildx-action@v3
@@ -226,19 +242,38 @@ jobs:
 
           tags="$IMAGE:$VERSION,$IMAGE:$MINOR,$IMAGE:$MAJOR,$IMAGE:sha-$SHA"
 
-          # `latest` only moves when this version is the highest one ever
-          # tagged. Otherwise a merge of an older branch would drag every
-          # user back to an old image.
-          newest=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -1)
-          newest=${newest#v}
+          # `latest` moves only when this build is at least as new as
+          # the highest version already published. Otherwise merging a
+          # stale branch would drag every user pulling `latest` back to
+          # an old image.
+          #
+          # The record of what has been published is the registry, not
+          # the git tags. The mirror's checkout carries only the tags
+          # GitHub happens to have, and nothing was ever creating them:
+          # the sole tag was v2.0.0, so every release since was judged
+          # "older than the newest tag" and `latest` stayed frozen on
+          # 2.0.0 while 2.0.8 shipped. Anyone pulling `latest` was served
+          # the oldest image in the repository.
+          #
+          # If the query fails the list comes back empty and `latest`
+          # moves. That is the right way round: the alternative is the
+          # frozen stale tag this replaces, and a missing safeguard is
+          # better than an inverted one.
+          published=$(curl -fsS --max-time 60 \
+            -H "Authorization: Bearer ${{ secrets.GHCR_TOKEN }}" \
+            "https://${{ env.REGISTRY }}/v2/${{ env.IMAGE_NAME }}/tags/list?n=1000" \
+            | tr ',' '\n' | tr -d '"[]{}' | sed 's/^.*://' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true)
+          newest=$(printf '%s\n' "$published" | sed '/^$/d' | sort -V | tail -1)
+
           if [ -z "$newest" ]; then
             tags="$tags,$IMAGE:latest"
-            echo "no prior tags; latest will point here"
-          elif [ "$VERSION" = "$newest" ]; then
+            echo "no version tags published yet; latest will point here"
+          elif [ "$(printf '%s\n%s\n' "$newest" "$VERSION" | sort -V | tail -1)" = "$VERSION" ]; then
             tags="$tags,$IMAGE:latest"
-            echo "$VERSION is the highest tag; latest will point here"
+            echo "$VERSION is at least the highest published ($newest); latest will point here"
           else
-            echo "newest released tag is $newest, not $VERSION; latest left alone"
+            echo "highest published is $newest, above $VERSION; latest left alone"
           fi
 
           # Emitted comma-separated on one line, never as the multi-line
@@ -268,6 +303,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
+            COMMIT=${{ github.sha }}
           labels: |
             org.opencontainers.image.title=My Cloud
             org.opencontainers.image.description=Self-hosted file sharing with plain files on disk

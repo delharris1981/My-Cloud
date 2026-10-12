@@ -39,6 +39,14 @@ jobs:
           ./scripts/check-docker-context.sh Dockerfile.go-build .dockerignore .
           ./scripts/check-docker-context.sh OLD/Dockerfile.node OLD/.dockerignore OLD
 
+      - name: Check the Docker base image accounts
+        # Alpine reserves GID 100 for `users`, which is the PGID this image
+        # defaults to. Creating a group there fails the image build with a
+        # bare "exit code: 1". Only the base image knows, so this downloads
+        # its minirootfs and checks the Dockerfile's adduser/addgroup calls.
+        run: ./scripts/check-docker-base.sh Dockerfile.go-build
+
+
 
       - name: Verify CGO stays disabled
         # modernc.org/sqlite is pure Go precisely so the release binary is

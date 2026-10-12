@@ -14,18 +14,23 @@
 # docker-compose.node.yml.
 services:
   my-cloud:
-    # Pinned to an exact version rather than `latest`. `latest` only moves when
-    # a release happens, so it is safe, but pinning means a restart never
-    # silently changes what you are running. To follow releases instead:
+    # Tracks `latest` by default. It used to default to a hardcoded 2.0.0, which
+    # was a reasonable accident while `latest` was frozen — but that frozen tag
+    # meant `latest` was serving the oldest image in the repository, so a pin
+    # and `latest` were the same thing. With `latest` fixed, defaulting to it
+    # tracks releases, and pinning is one variable away:
     #
-    #   MYCLOUD_TAG=latest docker compose up -d
+    #   MYCLOUD_TAG=2.0.8 docker compose up -d
     #
     # Tags published for a release of X.Y.Z:
     #   X.Y.Z        the exact release
     #   X.Y          newest patch in that line
     #   X            newest release in that major line
-    #   latest       the highest version ever released
-    image: ghcr.io/delharris1981/my-cloud:${MYCLOUD_TAG:-2.0.0}
+    #   latest       the highest version ever published
+    #
+    # `latest` never moves backwards: a build below the highest published
+    # version leaves it alone.
+    image: ghcr.io/delharris1981/my-cloud:${MYCLOUD_TAG:-latest}
 
     container_name: my-cloud
     ports:
