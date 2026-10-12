@@ -77,10 +77,28 @@ fi
 
 echo "  base image snapshot: $TARBALL"
 curl -fsS --max-time 180 "$DIRURL/$TARBALL" -o "$ROOT/base.tar.gz"
-tar xzf "$ROOT/base.tar.gz" -C "$ROOT" etc/passwd etc/group
 
-[ -f "$ROOT/etc/passwd" ] && [ -f "$ROOT/etc/group" ] \
-  || { echo "  ✗ base image snapshot has no /etc/passwd or /etc/group" >&2; exit 1; }
+# Extract the whole archive rather than naming the members. The archive stores
+# its paths with a leading "./", and GNU tar — the one on the CI runner —
+# refuses a bare member name against it:
+#
+#   tar: etc/passwd: Not found in archive
+#   tar: Exiting with failure status due to previous errors   (exit 2)
+#
+# bsdtar, which is what macOS ships, tolerates the same request, so this passed
+# locally and failed on the runner. Extracting everything sidesteps member
+# matching altogether. It is safe without root: a minirootfs holds only files,
+# directories and symlinks, with no device nodes to create.
+"${TAR:-tar}" xzf "$ROOT/base.tar.gz" -C "$ROOT" --no-same-owner
+
+PASSWD=$(find "$ROOT" -path '*/etc/passwd' -print -quit)
+GROUP=$(find "$ROOT" -path '*/etc/group' -print -quit)
+
+if [ -z "$PASSWD" ] || [ -z "$GROUP" ]; then
+  echo "  ✗ no /etc/passwd and /etc/group in the base image snapshot" >&2
+  echo "    looked under $ROOT; extracted with: ${TAR:-tar} --version" >&2
+  exit 1
+fi
 
 # Report an account creation only when the Dockerfile actually makes one.
 FAILFILE="$ROOT/fail"
@@ -112,7 +130,7 @@ echo "$adds" | while IFS= read -r line; do
       gid=$(printf '%s' "$line" | grep -oE '(-g|--gid[= ]?)[ =]?[0-9]+' \
             | grep -oE '[0-9]+' | head -1 || true)
       if [ -n "$gid" ]; then
-        owner=$(awk -F: -v g="$gid" '$3==g {print $1}' "$ROOT/etc/group")
+        owner=$(awk -F: -v g="$gid" '$3==g {print $1}' "$GROUP")
         if [ -n "$owner" ]; then
           echo "  ✗ in: $(printf '%s' "$line" | sed 's/^[[:space:]]*//')"
           echo "      creates a group at GID $gid, but the base image already has '$owner' at that GID."
@@ -128,7 +146,7 @@ echo "$adds" | while IFS= read -r line; do
       uid=$(printf '%s' "$line" | grep -oE '(-u|--uid[= ]?)[ =]?[0-9]+' \
             | grep -oE '[0-9]+' | head -1 || true)
       if [ -n "$uid" ]; then
-        owner=$(awk -F: -v u="$uid" '$3==u {print $1}' "$ROOT/etc/passwd")
+        owner=$(awk -F: -v u="$uid" '$3==u {print $1}' "$PASSWD")
         if [ -n "$owner" ]; then
           echo "  ✗ in: $(printf '%s' "$line" | sed 's/^[[:space:]]*//')"
           echo "      creates an account at UID $uid, but the base image already has '$owner' at that UID."
@@ -140,7 +158,7 @@ echo "$adds" | while IFS= read -r line; do
       grp=$(printf '%s' "$line" | grep -oE '(-G|--ingroup[= ]?)[ =]?[A-Za-z_][A-Za-z0-9_-]*' \
             | grep -oE '[A-Za-z_][A-Za-z0-9_-]*$' | head -1 || true)
       if [ -n "$grp" ] && ! printf '%s\n' "$created_groups" | grep -qx "$grp"; then
-        if ! awk -F: -v g="$grp" '$1==g {found=1} END {exit !found}' "$ROOT/etc/group"; then
+        if ! awk -F: -v g="$grp" '$1==g {found=1} END {exit !found}' "$GROUP"; then
           echo "  ✗ in: $(printf '%s' "$line" | sed 's/^[[:space:]]*//')"
           echo "      puts the account in group '$grp', which the base image does not define."
           echo "      adduser exits 1 and the image build fails."
