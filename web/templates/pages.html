@@ -1,0 +1,131 @@
+{{define "shares"}}
+<div class="browser" id="shares">
+  <div class="toolbar">
+    <h2>Shared links</h2>
+    {{if .Disabled}}
+      <p class="form-error">Public share links are disabled by the administrator.</p>
+    {{else}}
+      <p class="muted">Create a share from the file browser: select items, then choose Share.</p>
+    {{end}}
+  </div>
+  {{if .Shares}}
+    <ul class="file-list list">
+      {{range .Shares}}
+        <li class="file-item">
+          <span class="file-icon" aria-hidden="true">🔗</span>
+          <span class="file-name">{{if .IsMulti}}{{len .Items}} items{{else}}{{.FirstName}}{{end}}</span>
+          <span class="muted">/{{.Token}}</span>
+          {{if .HasPassword}}<span class="badge">password</span>{{end}}
+          {{if .AllowUpload}}<span class="badge">drop box</span>{{end}}
+          {{if .Expired}}<span class="badge warn">expired</span>{{end}}
+          <span class="file-time">{{.Downloads}} download(s)</span>
+          <span class="file-actions">
+            <a class="btn tiny" href="/s/{{.Token}}" target="_blank" rel="noopener">Open</a>
+            <form method="post" action="/shares/delete" class="inline"
+                  onsubmit="return confirm('Revoke this share link?')">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input type="hidden" name="token" value="{{.Token}}">
+              <button type="submit" class="btn tiny danger">Revoke</button>
+            </form>
+          </span>
+        </li>
+      {{end}}
+    </ul>
+  {{else}}
+    <p class="empty">No share links yet.</p>
+  {{end}}
+</div>
+{{end}}
+
+{{define "admin"}}
+<div class="browser" id="admin">
+  <div class="toolbar"><h2>Users</h2></div>
+  <ul class="file-list list">
+    {{range .Users}}
+      <li class="file-item">
+        <span class="file-name">{{.Username}}</span>
+        {{if .IsAdmin}}<span class="badge">admin</span>{{end}}
+        <span class="muted">{{if .QuotaMB}}{{.QuotaMB}} MB{{else}}unlimited{{end}}</span>
+        <span class="file-actions">
+          <form method="post" action="/admin/users/{{.Username}}/delete" class="inline"
+                onsubmit="return confirm('Delete this account? Their files stay on disk.')">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <button type="submit" class="btn tiny danger">Delete</button>
+          </form>
+        </span>
+      </li>
+    {{end}}
+  </ul>
+
+  <form method="post" action="/admin/users" class="stacked-form">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <h3>Add a user</h3>
+    <label for="nu">Username</label>
+    <input id="nu" name="username" type="text" required>
+    <label for="np">Password</label>
+    <input id="np" name="password" type="password" required minlength="6" autocomplete="new-password">
+    <label for="nq">Quota (MB, 0 = unlimited)</label>
+    <input id="nq" name="quotaMB" type="number" min="0" value="0">
+    <button type="submit" class="btn primary">Create user</button>
+  </form>
+</div>
+{{end}}
+
+{{define "settings"}}
+<div class="browser" id="settings">
+  <section class="panel">
+    <h2>Account</h2>
+    <p class="muted">Signed in as <strong>{{.User.Username}}</strong>
+      {{if .User.HasTOTP}}<span class="badge">2FA on</span>{{end}}</p>
+
+    <form method="post" action="/settings/password" class="stacked-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <h3>Change password</h3>
+      <label for="pwcur">Current password</label>
+      <input id="pwcur" name="current" type="password" required autocomplete="current-password">
+      <label for="pwnew">New password</label>
+      <input id="pwnew" name="next" type="password" required minlength="6" autocomplete="new-password">
+      <button type="submit" class="btn primary">Update password</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Signed-in devices</h2>
+    <ul class="file-list list">
+      {{range .Devices}}
+        <li class="file-item">
+          <span class="file-name">{{if .UserAgent}}{{.UserAgent}}{{else}}Unknown browser{{end}}</span>
+          <span class="muted">{{.IP}}</span>
+          <span class="file-time">{{.LastSeen}}</span>
+        </li>
+      {{end}}
+    </ul>
+    <form method="post" action="/auth/logout-all">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button type="submit" class="btn danger">Sign out of all devices</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>App passwords</h2>
+    <p class="muted">For WebDAV and other clients that cannot show a 2FA prompt.</p>
+    <ul class="file-list list">
+      {{range .AppPasswords}}
+        <li class="file-item">
+          <span class="file-name">{{.Label}}</span>
+          <form method="post" action="/settings/app-passwords/delete" class="inline">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <input type="hidden" name="id" value="{{.ID}}">
+            <button type="submit" class="btn tiny danger">Revoke</button>
+          </form>
+        </li>
+      {{end}}
+    </ul>
+    <form method="post" action="/settings/app-passwords" class="inline">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <input type="text" name="label" placeholder="Label (e.g. Finder)" required>
+      <button type="submit" class="btn">Create</button>
+    </form>
+  </section>
+</div>
+{{end}}

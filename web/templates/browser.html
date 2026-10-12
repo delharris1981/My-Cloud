@@ -1,0 +1,158 @@
+{{/* The file browser body. Rendered into the layout and, on an htmx
+     navigation, swapped in as the whole content region.
+
+     Selection state lives in the `selected` query parameter rather than in JS,
+     so a reload or a shared link reproduces the same view. */}}
+{{define "browser"}}
+<div class="browser" id="browser"
+     hx-get="/files/list?path={{.Path}}"
+     hx-target="#browser" hx-swap="outerHTML" hx-push-url="false">
+
+  {{template "toolbar" .}}
+
+  <div id="search-results" class="search-results">
+    {{if .SearchResults}}{{.SearchResults}}{{end}}
+  </div>
+
+  {{if .Items}}
+    <ul class="file-list {{.ViewMode}}" id="file-list">
+      {{range .Items}}
+        <li class="file-item{{if (index $.Selected .Name)}} selected{{end}}"
+            data-path="{{.Name}}" data-isdir="{{.IsDir}}">
+          <label class="file-select">
+            <input type="checkbox" name="selected" value="{{.Name}}"
+                   {{if (index $.Selected .Name)}}checked{{end}}
+                   aria-label="Select {{.Name}}">
+          </label>
+          <a class="file-link" href="{{if .IsDir}}{{dirLink (printf "%s/%s" $.Path .Name)}}{{else}}{{pathLink (printf "%s/%s" $.Path .Name)}}{{end}}">
+            <span class="file-icon" aria-hidden="true">
+              {{if .IsDir}}📁{{else if isImage .Name}}🖼️{{else if isVideo .Name}}🎬{{else if isAudio .Name}}🎵{{else if isPDF .Name}}📕{{else if hasExt .Name ".txt" ".md" ".json" ".log" ".csv"}}📄{{else if hasExt .Name ".zip" ".gz" ".tar"}}🗜️{{else}}📄{{end}}
+            </span>
+            <span class="file-name">{{.Name}}</span>
+          </a>
+          <span class="file-size">{{if .IsDir}}—{{else}}{{humanSize .Size}}{{end}}</span>
+          <span class="file-time">{{humanTime .ModTime}}</span>
+          {{/* Actions are real forms: with JS off they POST and reload. */}}
+          <span class="file-actions">
+            <form method="post" action="/files/rename" class="inline">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input type="hidden" name="path" value="{{printf "%s/%s" $.Path .Name}}">
+              <input type="text" name="name" value="{{.Name}}" class="rename-input" aria-label="New name for {{.Name}}">
+              <button type="submit" class="btn tiny">Rename</button>
+            </form>
+            <form method="post" action="/files/delete" class="inline">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input type="hidden" name="paths[]" value="{{printf "%s/%s" $.Path .Name}}">
+              <button type="submit" class="btn tiny danger">Delete</button>
+            </form>
+          </span>
+        </li>
+      {{end}}
+    </ul>
+  {{else}}
+    <p class="empty">This folder is empty.</p>
+  {{end}}
+
+  {{template "uploadform" .}}
+</div>
+{{end}}
+
+{{define "toolbar"}}
+<div class="toolbar">
+  <nav class="breadcrumbs" aria-label="Breadcrumb">
+    {{range .Segments}}
+      {{if .Last}}<span aria-current="page">{{.Name}}</span>
+      {{else}}<a href="/files?path={{.Path}}" hx-boost="true">{{.Name}}</a><span class="sep">/</span>{{end}}
+    {{end}}
+  </nav>
+  <div class="toolbar-actions">
+    <form method="post" action="/files/mkdir" class="inline">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <input type="hidden" name="path" value="{{.Path}}">
+      <input type="text" name="name" placeholder="New folder" aria-label="New folder name" required>
+      <button type="submit" class="btn">Create</button>
+    </form>
+    <a class="btn ghost" href="/files?path={{.Path}}&amp;view={{if eq .ViewMode "grid"}}list{{else}}grid{{end}}"
+       hx-get="/files?path={{.Path}}&amp;view={{if eq .ViewMode "grid"}}list{{else}}grid{{end}}"
+       hx-target="#browser" hx-swap="outerHTML">
+      {{if eq .ViewMode "grid"}}List view{{else}}Grid view{{end}}
+    </a>
+  </div>
+</div>
+{{end}}
+
+{{/* The upload form is a plain multipart POST. htmx adds a progress
+     indicator when available; without JS the upload still works. */}}
+{{define "uploadform"}}
+<form class="upload-form" method="post" action="/files/upload?path={{.Path}}"
+      enctype="multipart/form-data"
+      hx-post="/files/upload?path={{.Path}}" hx-encoding="multipart/form-data"
+      hx-swap="none" hx-indicator="#upload-progress">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <label class="btn primary">
+    Upload files
+    <input type="file" name="files" multiple required
+           onchange="this.form.requestSubmit()">
+  </label>
+  <span class="hint">or drop files here</span>
+  <progress id="upload-progress" class="htmx-indicator" value="0" max="100"></progress>
+</form>
+{{end}}
+
+{{define "search-results"}}
+{{if .Query}}
+  <p class="muted">{{len .Results}} result(s) for “{{.Query}}”</p>
+  <ul class="file-list list">
+    {{range .Results}}
+      <li class="file-item">
+        <a class="file-link" href="{{if .IsDir}}{{dirLink .Path}}{{else}}{{pathLink .Path}}{{end}}">
+          <span class="file-icon" aria-hidden="true">{{if .IsDir}}📁{{else}}📄{{end}}</span>
+          <span class="file-name">{{.Path}}</span>
+        </a>
+        <span class="file-size">{{if .IsDir}}—{{else}}{{humanSize .Size}}{{end}}</span>
+        <span class="file-time">{{humanTime .ModTime}}</span>
+      </li>
+    {{end}}
+  </ul>
+{{end}}
+{{end}}
+
+{{define "trash"}}
+<div class="browser" id="trash">
+  <div class="toolbar">
+    <h2>Trash</h2>
+    <form method="post" action="/trash/empty" class="inline">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button type="submit" class="btn danger"
+              onclick="return confirm('Permanently delete everything in the trash?')">Empty trash</button>
+    </form>
+  </div>
+  {{if .Items}}
+    <ul class="file-list list">
+      {{range .Items}}
+        <li class="file-item">
+          <span class="file-icon" aria-hidden="true">{{if .IsDir}}📁{{else}}📄{{end}}</span>
+          <span class="file-name">{{.Name}}</span>
+          <span class="file-size">{{humanSize .Size}}</span>
+          <span class="file-time">deleted {{humanTime .DeletedAt}}</span>
+          <span class="file-path muted">{{.Path}}</span>
+          <span class="file-actions">
+            <form method="post" action="/trash/restore" class="inline">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input type="hidden" name="ids[]" value="{{.ID}}">
+              <button type="submit" class="btn tiny">Restore</button>
+            </form>
+            <form method="post" action="/trash/delete" class="inline">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input type="hidden" name="ids[]" value="{{.ID}}">
+              <button type="submit" class="btn tiny danger">Delete forever</button>
+            </form>
+          </span>
+        </li>
+      {{end}}
+    </ul>
+  {{else}}
+    <p class="empty">The trash is empty.</p>
+  {{end}}
+</div>
+{{end}}

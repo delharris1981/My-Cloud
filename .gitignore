@@ -1,7 +1,18 @@
+# node_modules at any level: OLD/ is the archived Node app and would
+# otherwise have its dependencies committed.
 node_modules/
+npm-debug.log*
+
 dev-config/
 dev-data/
 config/
 data/
 *.log
 .DS_Store
+
+# Go build artifacts
+/my-cloud
+/dist/
+*.db
+*.db-wal
+*.db-shm

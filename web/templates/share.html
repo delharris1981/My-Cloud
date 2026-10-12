@@ -1,0 +1,47 @@
+{{define "share-unlock"}}
+<div class="auth-card">
+  <div class="auth-logo">🔒</div>
+  <h1>Protected link</h1>
+  <p class="muted">This link is password protected.</p>
+  <form method="post" action="/s/{{.Token}}/unlock" class="auth-form">
+    <label for="pw">Password</label>
+    <input id="pw" name="password" type="password" required autofocus autocomplete="off">
+    <button type="submit" class="btn primary wide">Unlock</button>
+  </form>
+  {{if .Error}}<p class="form-error" role="alert">Wrong password.</p>{{end}}
+</div>
+{{end}}
+
+{{define "share-listing"}}
+<div class="auth-card wide">
+  <h1>Shared with you</h1>
+  <ul class="file-list list">
+    {{range .Items}}
+      <li class="file-item">
+        <span class="file-icon" aria-hidden="true">{{if .IsDir}}📁{{else}}📄{{end}}</span>
+        <span class="file-name">{{.Path}}</span>
+        <a class="btn tiny" href="/s/{{$.Share.Token}}/download?i={{.Ordinal}}" download>Download</a>
+      </li>
+    {{end}}
+  </ul>
+  {{if gt (len .Items) 1}}
+    <a class="btn primary" href="/s/{{.Share.Token}}/download">Download all as zip</a>
+  {{end}}
+  {{if .Upload}}
+    <hr>
+    <h2>Upload to this folder</h2>
+    <form class="upload-form" method="post" enctype="multipart/form-data"
+          action="/s/{{.Share.Token}}/upload">
+      <label class="btn primary">
+        Choose files
+        <input type="file" name="files" multiple required>
+      </label>
+      <button type="submit" class="btn">Upload</button>
+    </form>
+  {{end}}
+</div>
+{{end}}
+
+{{define "sharepage"}}
+<div class="auth-screen"><div class="auth-card">{{.Content}}</div></div>
+{{end}}

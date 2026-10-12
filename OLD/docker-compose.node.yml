@@ -1,7 +1,15 @@
+# Node build of My Cloud — the current production image. Kept as the rollback
+# target during the strangler rollout; see docker-compose.go.yml for the Go
+# build.
+#
+#   docker compose up -d
+#
 services:
   my-cloud:
-    build: .
-    container_name: my-cloud
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    container_name: my-cloud-node
     ports:
       - "8686:8686"
     environment:

@@ -1,0 +1,15 @@
+# Ignores applied when OLD/ is the build context (see Dockerfile.node there).
+# The root .dockerignore already excludes OLD/, so a Node build uses this one.
+node_modules
+dev-config
+dev-data
+dev-config-gen.js
+config
+data
+.git
+templates
+ca_profile.xml
+*.md
+docker-compose*.yml
+docker-entrypoint-go.sh
+Dockerfile.go-build

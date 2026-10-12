@@ -1,0 +1,216 @@
+# Gitea Actions: build the Go image and publish it to GHCR.
+#
+# Gitea mirrors the GitHub repository; this workflow runs there and pushes the
+# image to the same GitHub Container Registry the Node image was published to,
+# so consumers do not need to care which forge triggered the build.
+#
+# Tags produced for a build of VERSION X.Y.Z at commit C:
+#   X.Y.Z          the exact release
+#   X.Y            the minor line, moving forward
+#   X              the major line, moving forward
+#   latest         only when X.Y.Z is the highest version seen (i.e. a release)
+#   C              the commit sha, so every commit is addressable
+#
+# Every commit therefore gets its own immutable tag, and the minor/major tags
+# point at the newest release in that line.
+name: Build and publish image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    # Nothing is published until the code is proven: vet, tests under the race
+    # detector, and the filesystem-access audit that enforces the vfs choke
+    # point all have to pass first.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Verify CGO stays disabled
+        # modernc.org/sqlite is pure Go precisely so the release binary is
+        # static. A cgo dependency slipping in would silently break that.
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l ./cmd ./internal ./web)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Test with the race detector
+        run: go test -race -count=1 ./...
+
+      - name: Audit filesystem access
+        run: |
+          hits=$(grep -rn --include='*.go' -E '\bos\.(Open|Create|OpenFile|WriteFile|ReadFile|RemoveAll|MkdirAll|Rename)\(' \
+            ./cmd ./internal \
+            | grep -v '_test\.go:' \
+            | grep -v -E '^\./internal/(vfs|upload|store|config|crypt)/' \
+            | grep -v -E 'internal/server/fsutil\.go' \
+            | grep -v -E '^\./cmd/verify-cutover/' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::user-data I/O must go through vfs.Resolve (internal/vfs)"
+            echo "$hits"
+            exit 1
+          fi
+          echo "no user-data filesystem access outside the allowed packages"
+
+      - name: Audit for weak crypto
+        run: |
+          if grep -rn --include='*.go' -E '\bmd5\b|crypto/des\b' ./cmd ./internal; then
+            echo "::error::weak or deprecated crypto primitive found"
+            exit 1
+          fi
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Gitea's mirror of a GitHub repo has a shallow history by default;
+          # the full clone is needed to compare tags and decide whether this
+          # build is the newest release.
+          fetch-depth: 0
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          # The GHCR PAT is stored on the Gitea instance, not taken from the
+          # mirrored repository's GitHub token — a mirror's GITHUB_TOKEN is
+          # scoped to Gitea and cannot write to GHCR.
+          username: ${{ secrets.GHCR_USERNAME }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Work out the tags
+        id: meta
+        run: |
+          set -eu
+          VERSION=$(tr -d '[:space:]' < VERSION)
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::VERSION must be X.Y.Z, got '$VERSION'"
+            exit 1
+          fi
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f1,2)
+          SHA=$(git rev-parse --short HEAD)
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+
+          tags="$IMAGE:$VERSION $IMAGE:$MINOR $IMAGE:$MAJOR $IMAGE:sha-$SHA"
+
+          # `latest` only moves when this version is the highest one ever
+          # tagged. Otherwise a merge of an older branch would drag every
+          # user back to an old image.
+          newest=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -1)
+          newest=${newest#v}
+          if [ -z "$newest" ]; then
+            tags="$tags $IMAGE:latest"
+            echo "no prior tags; latest will point here"
+          elif [ "$VERSION" = "$newest" ]; then
+            tags="$tags $IMAGE:latest"
+            echo "$VERSION is the highest tag; latest will point here"
+          else
+            echo "newest released tag is $newest, not $VERSION; latest left alone"
+          fi
+
+          echo "tags<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$tags" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Tags for $IMAGE"
+            echo '```'
+            echo "$tags"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.go-build
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+          labels: |
+            org.opencontainers.image.title=My Cloud
+            org.opencontainers.image.description=Self-hosted file sharing with plain files on disk
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test the pushed image
+        run: |
+          VERSION=$(tr -d '[:space:]' < VERSION)
+          docker run -d --name mc -p 18686:8686 \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$VERSION"
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:18686/healthz >/dev/null 2>&1 && break
+            sleep 1
+          done
+          # The version inside the container must match the tag it was pulled
+          # by, or the tag and the binary have drifted.
+          inside=$(curl -fsS http://127.0.0.1:18686/api/version | grep -o '"version": *"[^"]*"' | head -1)
+          echo "container reports $inside, expected $VERSION"
+          echo "$inside" | grep -q "$VERSION" || { echo "::error::version drift"; docker logs mc; exit 1; }
+          curl -fsS http://127.0.0.1:18686/api/status | grep -q '"needsSetup":true'
+          docker logs mc
+          docker rm -f mc
+
+  webdav-conformance:
+    # The plan names hand-rolled WebDAV edge cases as a risk and says to test
+    # against real clients. rclone is what users actually mount with.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Install rclone
+        run: |
+          curl -sO https://downloads.rclone.org/rclone-current-linux-amd64.zip
+          unzip -q rclone-current-linux-amd64.zip
+          sudo cp rclone-v*-linux-amd64/rclone /usr/local/bin/
+      - name: Start the server
+        run: |
+          mkdir -p cfg data
+          ./scripts/build.sh
+          ./my-cloud &
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8686/healthz >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8686/healthz
+      - name: Round-trip files over WebDAV
+        env:
+          MYCLOUD_CONFIG_DIR: cfg
+          MYCLOUD_DATA_DIR: data
+        run: ./scripts/dav-conformance.sh

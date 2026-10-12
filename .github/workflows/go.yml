@@ -1,0 +1,77 @@
+# GitHub Actions: checks only.
+#
+# The image is built and published by the Gitea workflow
+# (.gitea/workflows/docker.yml) as part of the GitHub → Gitea mirror. This
+# workflow exists so a pull request is validated before the mirror pushes
+# anything, without paying for two image builds per commit.
+name: Go checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Go 1.22+ is required for method-aware ServeMux patterns.
+          go-version: '1.24'
+          cache: true
+
+      - name: Verify CGO stays disabled
+        # modernc.org/sqlite is pure Go precisely so the release binary is
+        # static. A cgo dependency slipping in would silently break that.
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l ./cmd ./internal ./web)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      - name: Audit filesystem access
+        # Every path under the data directory is client-supplied and must go
+        # through vfs.Resolve. The only packages allowed to touch the
+        # filesystem are those that own confinement or persistence, plus two
+        # deliberate read-only exceptions:
+        #   cmd/verify-cutover  — reads .migrated.bak files to verify cutover
+        #   internal/server/fsutil.go — mkdir for a new user's directory
+        # Test files are excluded: writing outside the root is the point of a
+        # traversal test.
+        run: |
+          hits=$(grep -rn --include='*.go' -E '\bos\.(Open|Create|OpenFile|WriteFile|ReadFile|RemoveAll|MkdirAll|Rename)\(' \
+            ./cmd ./internal \
+            | grep -v '_test\.go:' \
+            | grep -v -E '^\./internal/(vfs|upload|store|config|crypt)/' \
+            | grep -v -E 'internal/server/fsutil\.go' \
+            | grep -v -E '^\./cmd/verify-cutover/' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::user-data I/O must go through vfs.Resolve (internal/vfs)"
+            echo "$hits"
+            exit 1
+          fi
+          echo "no user-data filesystem access outside the allowed packages"
+
+      - name: Audit for weak crypto
+        run: |
+          if grep -rn --include='*.go' -E '\bmd5\b|crypto/des\b' ./cmd ./internal; then
+            echo "::error::weak or deprecated crypto primitive found"
+            exit 1
+          fi
+          echo "no weak crypto primitives"
+
+      - name: Check the version file
+        run: ./scripts/check-version.sh

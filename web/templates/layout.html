@@ -1,0 +1,62 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="en" data-theme="{{.Theme}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · {{.SiteName}}</title>
+<meta name="theme-color" content="#12151c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="{{.SiteName}}">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%234f8ff7' d='M6.5 20a5.5 5.5 0 0 1-.44-10.98A7 7 0 0 1 19.5 11a4.5 4.5 0 0 1-.5 8.97z'/%3E%3C/svg%3E">
+</head>
+<body class="{{.BodyClass}}">
+{{template "toasts" .}}
+{{if .ShowHeadbar}}{{template "headbar" .}}{{end}}
+{{if .Content}}{{.Content}}{{end}}
+{{if .Script}}<script src="/static/vendor/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>{{end}}
+</body>
+</html>{{end}}
+
+{{define "toasts"}}<div id="toasts" class="toasts" aria-live="polite"></div>{{end}}
+
+{{define "headbar"}}
+<div class="headbar">
+  <a class="brand" href="/files"><span class="brand-icon">☁️</span><span>{{.SiteName}}</span></a>
+  <form class="search-form" action="/files" method="get" role="search">
+    {{/* One input serves both clients: htmx intercepts for live results, and
+         without JS the same form does a plain full-page GET. */}}
+    <input type="search" name="q" placeholder="Search files…" value="{{.Query}}" autocomplete="off"
+           hx-get="/search" hx-trigger="input changed delay:250ms, search"
+           hx-target="#search-results" hx-swap="innerHTML">
+  </form>
+  <nav class="headbar-nav">
+    <a href="/files" class="{{if eq .View "files"}}active{{end}}">Files</a>
+    <a href="/shares" class="{{if eq .View "shares"}}active{{end}}">Shared</a>
+    <a href="/trash" class="{{if eq .View "trash"}}active{{end}}">Trash</a>
+    {{if .IsAdmin}}<a href="/admin" class="{{if eq .View "admin"}}active{{end}}">Admin</a>{{end}}
+  </nav>
+  <div class="headbar-user">
+    <span class="muted">{{.Username}}</span>
+    <form method="post" action="/logout" class="inline">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <button class="btn ghost" type="submit">Sign out</button>
+    </form>
+  </div>
+</div>
+{{end}}
+
+{{define "breadcrumbs"}}
+<nav class="breadcrumbs" aria-label="Breadcrumb">
+  {{range .Segments}}
+    {{if .Last}}
+      <span aria-current="page">{{.Name}}</span>
+    {{else}}
+      <a href="/files?path={{.Path}}">{{.Name}}</a><span class="sep">/</span>
+    {{end}}
+  {{end}}
+</nav>
+{{end}}

@@ -1,5 +1,20 @@
 # ☁️ My Cloud
 
+> **⚠️ Go rewrite — all four phases built, cutover pending.** This repo is
+> being rewritten in Go. The Node app remains the production build
+> (`OLD/Dockerfile.node` / `OLD/docker-compose.node.yml`) and is fully
+> functional. The
+> Go build is feature-complete per
+> [`docs/plans/go-rewrite-phases.md`](docs/plans/go-rewrite-phases.md) and
+> verified against real Node-generated data, real WebDAV clients (rclone), and
+> a scripted conformance run — but it has not been through a side-by-side
+> rollout, so **the `latest` tag still points at Node**. Both builds read the
+> same `/config` and `/data` volumes, so switching is a tag change and rollback
+> is a `mv` away.
+>
+> Known gaps before cutover: no thumbnails, and the stylesheet is the original
+> one with additions rather than a rewrite.
+
 A lightweight, self-hosted file sharing platform in the spirit of **Nextcloud / ownCloud** — but with **zero database setup**. Built for Unraid and other home servers, aimed at people who don't have a ton of files and don't want to babysit MySQL or Postgres.
 
 Everything is stored as plain files:

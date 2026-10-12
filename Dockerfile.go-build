@@ -1,0 +1,74 @@
+# Go build for My Cloud. This is the rewrite's image; Dockerfile.node is the
+# existing Node image, kept intact so rollback during the strangler rollout is
+# a tag change rather than a rebuild.
+#
+# CGO_ENABLED=0 keeps the binary static — modernc.org/sqlite is pure Go
+# specifically so this works without a C toolchain in the final image.
+
+# --- build ---
+FROM golang:1.24-alpine AS build
+
+# The build stage needs git: the version stamp embeds the commit hash, and
+# VERSION is the single source of truth for the tag.
+RUN apk add --no-cache git
+
+WORKDIR /src
+
+# Copy the module files first so dependency download is cached independently
+# of source changes.
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY cmd ./cmd
+COPY internal ./internal
+COPY web ./web
+# VERSION and the build script are needed to stamp the binary.
+COPY VERSION ./VERSION
+COPY scripts ./scripts
+
+# The version is stamped from the VERSION file, so the image tag, the git tag,
+# and `my-cloud --version` inside the container cannot drift apart.
+# -trimpath keeps build paths out of the binary; -s -w drop the symbol table.
+ARG VERSION=""
+RUN set -eux; \
+    if [ -z "$VERSION" ]; then VERSION="$(tr -d '[:space:]' < VERSION)"; fi; \
+    echo "building my-cloud $VERSION"; \
+    CGO_ENABLED=0 GOOS=linux go build \
+      -trimpath \
+      -ldflags="-s -w \
+        -X github.com/derek/my-cloud/internal/version.Version=${VERSION} \
+        -X github.com/derek/my-cloud/internal/version.Commit=$(git rev-parse --short HEAD 2>/dev/null || echo none) \
+        -X github.com/derek/my-cloud/internal/version.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      -o /out/my-cloud ./cmd/my-cloud; \
+    /out/my-cloud --version
+
+# --- runtime ---
+FROM alpine:3.20
+
+# su-exec for the PUID/PGID privilege drop, ca-certificates for outbound TLS
+# (WebDAV over https, share links), tzdata so timestamps render in local time.
+RUN apk add --no-cache su-exec ca-certificates tzdata
+
+# Unraid's conventional ids. PUID/PGID override these at runtime.
+RUN addgroup -g 100 -S mycloud && adduser -u 99 -S -G mycloud mycloud
+
+WORKDIR /app
+
+COPY --from=build /out/my-cloud /app/my-cloud
+COPY docker-entrypoint-go.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+ENV MYCLOUD_CONFIG_DIR=/config \
+    MYCLOUD_DATA_DIR=/data \
+    MYCLOUD_PORT=8686 \
+    PUID=99 \
+    PGID=100 \
+    UMASK=022
+
+VOLUME ["/config", "/data"]
+EXPOSE 8686
+
+HEALTHCHECK --interval=60s --timeout=5s --start-period=10s \
+  CMD wget -q -O /dev/null http://127.0.0.1:8686/healthz || exit 1
+
+ENTRYPOINT ["/docker-entrypoint.sh"]

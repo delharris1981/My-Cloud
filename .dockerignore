@@ -1,10 +1,21 @@
+# The Go build context is the repository root. OLD/ is the archived Node app,
+# kept only as a rollback target, so it is excluded to keep the build context
+# small — nothing in the Go image needs it.
+#
+# The Node image is built with OLD/ as its own context and uses OLD/.dockerignore.
+OLD
 node_modules
 dev-config
 dev-data
+dev-config-gen.js
 config
 data
 .git
 templates
 ca_profile.xml
 *.md
-docker-compose.yml
+docker-compose*.yml
+Dockerfile.node
+docker-entrypoint.sh
+scripts
+docs

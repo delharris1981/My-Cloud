@@ -1,0 +1,27 @@
+# Go build of My Cloud. The Node build's compose file is docker-compose.node.yml
+# and remains the production configuration until cutover.
+#
+#   docker compose up -d
+#
+services:
+  my-cloud:
+    build:
+      context: .
+      dockerfile: Dockerfile.go-build
+    container_name: my-cloud
+    ports:
+      - "8686:8686"
+    environment:
+      # File ownership for created files (defaults are Unraid's nobody:users).
+      - PUID=99
+      - PGID=100
+      - UMASK=022
+      # Behind a TLS-terminating proxy that does not forward X-Forwarded-Proto,
+      # set this to add the Secure flag to the session cookie:
+      # - MYCLOUD_FORCE_SECURE_COOKIE=1
+    volumes:
+      # Settings, the SQLite database, and the encryption root key.
+      - ./config:/config
+      # Your files live here: /data/users/<username>/files
+      - ./data:/data
+    restart: unless-stopped
