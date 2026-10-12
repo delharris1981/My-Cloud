@@ -51,7 +51,13 @@ FROM alpine:3.20
 RUN apk add --no-cache su-exec ca-certificates tzdata
 
 # Unraid's conventional ids. PUID/PGID override these at runtime.
-RUN addgroup -g 100 -S mycloud && adduser -u 99 -S -G mycloud mycloud
+# Alpine already ships a "users" group at GID 100, which is exactly the PGID
+# this image defaults to. Creating another group at GID 100 fails the build with
+# "GID '100' already exists", so the account joins the group that is already
+# there. The runtime PGID still comes from the environment via su-exec; this
+# passwd entry only makes the account resolvable for docker exec and for files
+# that land owned by it.
+RUN adduser -u 99 -S -G users mycloud
 
 WORKDIR /app
 
