@@ -214,7 +214,7 @@ jobs:
           SHA=$(git rev-parse --short HEAD)
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
 
-          tags="$IMAGE:$VERSION $IMAGE:$MINOR $IMAGE:$MAJOR $IMAGE:sha-$SHA"
+          tags="$IMAGE:$VERSION,$IMAGE:$MINOR,$IMAGE:$MAJOR,$IMAGE:sha-$SHA"
 
           # `latest` only moves when this version is the highest one ever
           # tagged. Otherwise a merge of an older branch would drag every
@@ -222,24 +222,30 @@ jobs:
           newest=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -1)
           newest=${newest#v}
           if [ -z "$newest" ]; then
-            tags="$tags $IMAGE:latest"
+            tags="$tags,$IMAGE:latest"
             echo "no prior tags; latest will point here"
           elif [ "$VERSION" = "$newest" ]; then
-            tags="$tags $IMAGE:latest"
+            tags="$tags,$IMAGE:latest"
             echo "$VERSION is the highest tag; latest will point here"
           else
             echo "newest released tag is $newest, not $VERSION; latest left alone"
           fi
 
-          echo "tags<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$tags" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          # Emitted comma-separated on one line, never as the multi-line
+          # "key<<EOF" heredoc. Gitea's runner does not implement the heredoc
+          # form, so the tags arrive as one space-joined string and buildx
+          # rejects the whole thing with:
+          #   invalid tag "ghcr.io/...:2.0.3 ghcr.io/...:2.0 ..."
+          #
+          # build-push-action parses its list inputs on commas *and* newlines,
+          # so a comma-separated single line is unambiguous on both runners.
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           {
             echo "### Tags for $IMAGE"
             echo '```'
-            echo "$tags"
+            echo "$tags" | tr ',' '\n'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
