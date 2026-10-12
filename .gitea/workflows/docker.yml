@@ -379,6 +379,21 @@ jobs:
               echo "::group::image"
               docker image inspect "$IMAGE" --format 'arch={{.Architecture}} entrypoint={{.Config.Entrypoint}} user={{.Config.User}}' 2>&1 || echo "(image not present locally)"
               echo "::endgroup::"
+              # If the container produced nothing useful, ask the image directly
+              # what it can do. Each of these is a way the runtime image can
+              # fail to serve, and they are cheap because nothing is left
+              # running afterwards.
+              echo "::group::probe"
+              docker run --rm --entrypoint /bin/sh "$IMAGE" -c '
+                echo "running as: $(id)"
+                echo "su-exec:   $(command -v su-exec || echo NOT-ON-PATH)"
+                echo "binary:    $(ls -l /app/my-cloud 2>&1)"
+                echo "config:    $(su-exec 99:100 touch /config/.probe 2>&1 && echo writable || echo NOT-WRITABLE)"
+                echo "data:      $(su-exec 99:100 touch /data/.probe 2>&1 && echo writable || echo NOT-WRITABLE)"
+                echo "version as uid 99:"
+                su-exec 99:100 /app/my-cloud --version 2>&1 | head -3
+              ' 2>&1 || echo "(the probe could not run)"
+              echo "::endgroup::"
             fi
             docker rm -f mc >/dev/null 2>&1 || true
             exit "$rc"
