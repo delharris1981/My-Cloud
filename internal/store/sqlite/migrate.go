@@ -202,7 +202,11 @@ func importUsers(ctx context.Context, tx *txRunner, f legacyUsersFile, sealer *c
 
 		// TOTP secrets are re-sealed: they were plaintext base32 in the JSON.
 		if u.TotpSecret != "" || u.TotpPending != "" {
-			var secret, pending any
+			// secret is NOT NULL: a user who began enrolment but never
+			// confirmed has only a pending secret, so default it to an empty
+			// blob rather than nil. enabled stays 0, so the empty secret is
+			// never verified against.
+			secret, pending := []byte{}, any(nil)
 			if u.TotpSecret != "" {
 				// AAD binds the blob to this table+row, so it cannot be
 				// transplanted to another user's row.

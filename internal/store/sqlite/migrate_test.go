@@ -155,6 +155,45 @@ func TestMigrateReSealsTOTPSecrets(t *testing.T) {
 	}
 }
 
+// A user who started 2FA enrolment but never confirmed has a pending
+// secret and no confirmed one. That row must still migrate.
+func TestMigrateTOTPPendingOnly(t *testing.T) {
+	dir := t.TempDir()
+	legacyJSON(t, dir, "users.json", map[string]any{
+		"users": []any{map[string]any{
+			"username": "alice", "passwordHash": bcryptHash,
+			"createdAt": 1, "passwordChangedAt": 1,
+			"totpPending": "KRUGS4ZANFZSAYJA",
+		}},
+	})
+
+	db := freshDB(t, dir)
+	sealer := testSealer(t)
+	if _, err := Migrate(context.Background(), db, dir, sealer); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	var secret, pending []byte
+	var enabled int
+	if err := db.QueryRow(`SELECT secret, pending, enabled FROM totp WHERE username='alice'`).
+		Scan(&secret, &pending, &enabled); err != nil {
+		t.Fatalf("query totp: %v", err)
+	}
+	if len(secret) != 0 {
+		t.Fatalf("unconfirmed enrolment should have an empty secret, got %q", secret)
+	}
+	if enabled != 0 {
+		t.Fatalf("unconfirmed enrolment must not be enabled, got %d", enabled)
+	}
+	got, err := sealer.OpenString(crypt.PurposeSecrets, "totp.pending:alice", pending)
+	if err != nil {
+		t.Fatalf("pending secret does not decrypt: %v", err)
+	}
+	if got != "KRUGS4ZANFZSAYJA" {
+		t.Fatalf("pending round-trip mismatch: %q", got)
+	}
+}
+
 func TestMigrateAppPasswords(t *testing.T) {
 	dir := t.TempDir()
 	legacyJSON(t, dir, "users.json", map[string]any{
