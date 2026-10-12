@@ -118,6 +118,14 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
+
+      - name: Check the workflow files
+        # yaml.safe_load is not enough: a step can be spliced into the middle
+        # of another step's `run:` block and the file still parses. Three such
+        # edits got through here, and one shipped `fetch-depth: 0` into a
+        # shell script where the runner tried to execute it.
+        run: ./scripts/check-workflows.py
+
         with:
           go-version: '1.26'
           cache: true
@@ -200,6 +208,11 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The full history is no longer needed to decide `latest`, which now
+          # comes from the registry, but it still makes a missing or wrong tag
+          # list obvious in the logs rather than ambiguous.
+          fetch-depth: 0
 
       # These run here as well as in the test job, because the test job is
       # skipped when the core is unchanged — and a Dockerfile change is exactly
@@ -208,11 +221,15 @@ jobs:
       - name: Check the Dockerfile before building
         run: |
           ./scripts/check-docker-context.sh Dockerfile.go-build .dockerignore .
-          ./scripts/check-docker-base.sh Dockerfile.go-build        with:
-          # The full history is no longer needed to decide `latest`, which now
-          # comes from the registry, but it still makes a missing or wrong tag
-          # list obvious in the logs rather than ambiguous.
-          fetch-depth: 0
+          ./scripts/check-docker-base.sh Dockerfile.go-build
+
+      - name: Check the workflow files
+        # yaml.safe_load is not enough: a step can be spliced into the middle
+        # of another step's `run:` block and the file still parses. Three such
+        # edits got through here, and one shipped `fetch-depth: 0` into a
+        # shell script where the runner tried to execute it.
+        run: ./scripts/check-workflows.py
+
 
       - uses: docker/setup-buildx-action@v3
 
