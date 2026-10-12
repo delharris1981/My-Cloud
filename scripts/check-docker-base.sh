@@ -23,13 +23,16 @@ cd "$(dirname "$0")/.."
 DOCKERFILE=${1:-Dockerfile.go-build}
 [ -f "$DOCKERFILE" ] || { echo "error: $DOCKERFILE not found" >&2; exit 1; }
 
-# The base image is built for the runner's architecture. CI builds linux/amd64;
-# override for anything else.
-ARCH=${ARCH_OVERRIDE:-$(uname -m)}
-case "$ARCH" in
-  x86_64|amd64) ARCH=x86_64 ;;
-  aarch64|arm64) ARCH=aarch64 ;;
-  *) echo "warning: unrecognised arch '$ARCH', defaulting to x86_64" >&2; ARCH=x86_64 ;;
+# The deployment target is linux/amd64, so that is what gets validated. It is
+# pinned rather than taken from `uname -m` on purpose: the account layout is
+# architecture-independent today, but a check that silently follows the machine
+# it runs on is a check that can quietly stop checking the thing that ships.
+# Override to validate another target.
+TARGET_ARCH=${ARCH_OVERRIDE:-x86_64}
+case "$TARGET_ARCH" in
+  x86_64|amd64)   ARCH=x86_64 ;;
+  aarch64|arm64)  ARCH=aarch64 ;;
+  *) echo "error: unsupported ARCH_OVERRIDE '$TARGET_ARCH'" >&2; exit 1 ;;
 esac
 
 # The last FROM is the runtime stage, which is the one that creates accounts

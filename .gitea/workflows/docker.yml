@@ -300,6 +300,11 @@ jobs:
           context: .
           file: Dockerfile.go-build
           push: true
+          # The deployment target is x64. Without this the image is built
+          # for whichever architecture the runner happens to be, so an ARM
+          # runner would publish an arm64 image under the same tags and
+          # quietly replace the x64 one. Stated here so it cannot drift.
+          platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
@@ -330,6 +335,12 @@ jobs:
           echo "container reports $inside, expected $VERSION"
           echo "$inside" | grep -q "$VERSION" || { echo "::error::version drift"; docker logs mc; exit 1; }
           curl -fsS http://127.0.0.1:18686/api/status | grep -q '"needsSetup":true'
+          # The deployment target is x64. The binary reports how it was built, so
+          # this catches an image published for the wrong architecture under the
+          # right tags, which is what an unpinned runner would produce.
+          platform=$(curl -fsS http://127.0.0.1:18686/api/version | tr ',' '\n' | grep '"platform"')
+          echo "container reports $platform, expected linux/amd64"
+          echo "$platform" | grep -q 'linux/amd64' || { echo "::error::wrong architecture"; docker logs mc; exit 1; }
           docker logs mc
           docker rm -f mc
 
