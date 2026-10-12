@@ -334,8 +334,20 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ env.IMAGE_NAME }}
           provenance: true
           sbom: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # No buildx cache. `type=gha` talks to the Actions *artifact cache*
+          # service over ACTIONS_RUNTIME_URL. That is a different endpoint from
+          # the one actions/cache uses for the Go toolchain cache in the test
+          # job, which works fine — so the runner is not simply offline. The
+          # artifact cache service specifically is unreachable here, and the
+          # build died on it:
+          #
+          #   DeadlineExceeded: Get ".../_apis/artifactcache/cache?...":
+          #     dial tcp 172.26.0.3:43009: i/o timeout
+          #
+          # `ignore-error=true` would stop it being fatal, but the timeout is
+          # still paid on every run, for a cache that has never once hit.
+          # Restoring it on a runner with the service reachable is just adding
+          # these two lines back.
 
       - name: Smoke test the pushed image
         run: |
