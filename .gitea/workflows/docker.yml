@@ -359,6 +359,7 @@ jobs:
           VERSION=$(tr -d '[:space:]' < VERSION)
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$VERSION"
           RUN_OUT=
+          APP=http://127.0.0.1:8686
 
           # Every failure funnels through here. The diagnosis is printed as the
           # tail of the step and repeated as ::error:: annotations, so it
@@ -374,19 +375,17 @@ jobs:
               echo "container logs:"
               docker logs mc 2>&1 | tail -30
               echo ""
+              echo "reached the server from inside the container:"
+              docker exec mc wget -qO- "$APP/api/version" 2>&1 | head -5
+              echo ""
               echo "probe (bypasses the entrypoint, so it chowns first to match what"
               echo "the entrypoint does before dropping privileges):"
               docker run --rm --entrypoint /bin/sh "$IMAGE" -c '
-                echo "running as: $(id)"
                 echo "su-exec:   $(command -v su-exec || echo NOT-ON-PATH)"
                 echo "binary:    $(ls -l /app/my-cloud 2>&1)"
-                echo "volumes before chown:"
-                echo "  $(ls -ld /config /data 2>&1)"
                 chown -R 99:100 /config /data 2>&1
                 echo "config:    $(su-exec 99:100 touch /config/.probe 2>&1 && echo writable || echo NOT-WRITABLE)"
                 echo "data:      $(su-exec 99:100 touch /data/.probe 2>&1 && echo writable || echo NOT-WRITABLE)"
-                echo "version as uid 99:"
-                su-exec 99:100 /app/my-cloud --version 2>&1 | head -3
               ' 2>&1
             } 2>&1
           }
@@ -419,12 +418,15 @@ jobs:
           }
           trap report EXIT
 
-          # Ask the daemon for a free host port rather than naming one. Pinning
-          # a fixed host port made this step fail whenever anything else on the
-          # machine already had it: the container was left in "Created" and
-          # never started, which surfaced only as the server never answering.
+          # No -p. Publishing a host port and then curling it from the job
+          # assumes the runner shares a network namespace with the docker
+          # daemon. act does not: it runs the job inside a container, so
+          # 127.0.0.1 there is not the daemon's host, and the request never
+          # arrives. Every check below runs through `docker exec` instead, which
+          # has no such assumption and behaves identically on GitHub Actions,
+          # Gitea and act.
           echo "running $IMAGE"
-          if ! RUN_OUT=$(docker run -d --name mc -p 127.0.0.1::8686 "$IMAGE" 2>&1); then
+          if ! RUN_OUT=$(docker run -d --name mc "$IMAGE" 2>&1); then
             RUN_OUT=$(printf '%s' "$RUN_OUT" | tr '\n' ' ')
             diagnosed=1
             diagnose "docker run could not start the container" > /tmp/diag.txt 2>&1 || true
@@ -432,15 +434,17 @@ jobs:
             announce
             exit 1
           fi
-
-          PORT=$(docker port mc 8686/tcp 2>/dev/null | head -1 | sed 's/.*://')
-          BASE="http://127.0.0.1:${PORT:-8686}"
-          echo "container id ${RUN_OUT}, host port $PORT"
+          echo "container id $RUN_OUT"
 
           up=
-          for i in $(seq 1 30); do
-            if curl -fsS "$BASE/healthz" >/dev/null 2>&1; then
+          for i in $(seq 1 45); do
+            if docker exec mc wget -qO- "$APP/healthz" >/dev/null 2>&1; then
               up=1
+              break
+            fi
+            # Stop waiting the moment the container dies, rather than burning
+            # the full timeout on a container that is already gone.
+            if [ "$(docker inspect -f '{{.State.Running}}' mc 2>/dev/null)" = "false" ]; then
               break
             fi
             [ $((i % 10)) -eq 0 ] && echo "still waiting after ${i}s: $(docker inspect -f '{{.State.Status}}' mc 2>/dev/null || echo gone)"
@@ -449,24 +453,25 @@ jobs:
 
           if [ -z "$up" ]; then
             diagnosed=1
-            diagnose "the server never answered $BASE/healthz within 30s" > /tmp/diag.txt 2>&1 || true
+            diagnose "the server never answered $APP/healthz from inside the container" > /tmp/diag.txt 2>&1 || true
             tail -25 /tmp/diag.txt
             announce
             exit 1
           fi
+          echo "the server answered from inside the container"
 
           # The version inside the container must match the tag it was pulled
           # by, or the tag and the binary have drifted.
-          inside=$(curl -fsS "$BASE/api/version" | grep -o '"version": *"[^"]*"' | head -1)
+          inside=$(docker exec mc wget -qO- "$APP/api/version" | grep -o '"version": *"[^"]*"' | head -1)
           echo "container reports $inside, expected $VERSION"
           echo "$inside" | grep -q "$VERSION" || { echo "::error::version drift: container has $inside, tag says $VERSION"; exit 1; }
 
-          curl -fsS "$BASE/api/status" | grep -q '"needsSetup":true' \
+          docker exec mc wget -qO- "$APP/api/status" | grep -q '"needsSetup":true' \
             || { echo "::error::first boot should report needsSetup:true"; exit 1; }
 
           # The deployment target is x64. The binary reports how it was built,
           # so this catches an image published for the wrong architecture.
-          platform=$(curl -fsS "$BASE/api/version" | tr ',' '\n' | grep '"platform"')
+          platform=$(docker exec mc wget -qO- "$APP/api/version" | tr ',' '\n' | grep '"platform"')
           echo "container reports $platform, expected linux/amd64"
           echo "$platform" | grep -q 'linux/amd64' || { echo "::error::wrong architecture: $platform"; exit 1; }
 
