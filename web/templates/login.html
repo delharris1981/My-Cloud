@@ -38,6 +38,9 @@
       {{end}}
     {{end}}
     {{if .Error}}<p class="form-error" role="alert">{{.Error}}</p>{{end}}
+    {{/* Shown to signed-out visitors too: someone who cannot get past the
+         login page still needs to be able to say which build they are on. */}}
+    <p class="muted version-detail">My Cloud v{{.Version}}</p>
   </div>
 </div>
 {{end}}

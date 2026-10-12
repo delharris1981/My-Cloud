@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/derek/my-cloud/internal/version"
 )
 
 // TestNoJSAcceptance walks the full user journey using nothing but form POSTs
@@ -183,6 +185,80 @@ func TestNoJSAcceptance(t *testing.T) {
 
 // TestMutationWithoutCSRFIsRefused proves the no-JS forms are still protected:
 // working without JavaScript must not mean working without CSRF.
+// TestVersionIsVisible guards the version display. It existed as a real bug:
+// the settings fragment renders from its own map rather than from pageData, so
+// {{.Version}} resolved to nothing and the page silently showed "v" with no
+// number. A missing value in a template is not an error, so only a test
+// notices.
+func TestVersionIsVisible(t *testing.T) {
+	s := newTestServer(t, true)
+	srv := s.Handler()
+	jar := &cookieJar{t: t}
+	loginGET(t, srv, jar)
+	loginCSRF := jar.last("mycloud_login_csrf")
+	postForm(t, srv, jar, "/login", url.Values{
+		"csrf_token": {loginCSRF},
+		"username":   {"alice"},
+		"password":   {"secret123"},
+	})
+
+	want := version.Version
+	if want == "" {
+		t.Fatal("no version set")
+	}
+
+	// The headbar badge, on every authenticated page.
+	for _, p := range []string{"/files", "/trash", "/shares", "/settings", "/admin"} {
+		body := pageBody(t, srv, jar, p)
+		if !strings.Contains(body, want) {
+			t.Errorf("%s does not show the version %q", p, want)
+		}
+	}
+	// The settings page shows it with a commit and a link to the details.
+	//
+	// This asserts on the settings block *specifically*. Checking merely that
+	// the version appears somewhere on the page passes for the wrong reason:
+	// the headbar badge is on every page, so a settings fragment that rendered
+	// "v" with no number would still satisfy a substring check. That is
+	// precisely the bug this test exists to catch.
+	settings := pageBody(t, srv, jar, "/settings")
+	if !strings.Contains(settings, "version-detail") {
+		t.Fatal("settings page has no version line")
+	}
+	detail := between(settings, `<p class="muted version-detail">`, "</p>")
+	if detail == "" {
+		t.Fatal("could not isolate the settings version block")
+	}
+	if !strings.Contains(detail, "v"+want) {
+		t.Errorf("settings version block reads %q, want it to contain v%s", strings.TrimSpace(detail), want)
+	}
+	if !strings.Contains(detail, "/api/version") {
+		t.Error("settings version block does not link to the build details")
+	}
+	// A signed-out visitor must be able to name the build too: someone stuck
+	// at the login page still needs to file a useful report.
+	anon := &cookieJar{t: t}
+	login := pageBody(t, srv, anon, "/login")
+	if !strings.Contains(login, want) {
+		t.Error("login page does not show the version")
+	}
+}
+
+// TestVersionIsNotPlaceholder checks the linked-in value reaches the page, so a
+// broken stamp is visible rather than looking like a cosmetic issue.
+func TestVersionStampReachesPage(t *testing.T) {
+	// A build made without the linker flags reports "dev"; that is deliberate
+	// and obviously wrong at a glance, which is the point.
+	if version.Version != "dev" && version.Version == "" {
+		t.Fatal("version is empty")
+	}
+	s := newTestServer(t, true)
+	body := pageBody(t, s.Handler(), &cookieJar{t: t}, "/login")
+	if !strings.Contains(body, "v"+version.Version) {
+		t.Fatalf("page shows neither the real version nor the dev placeholder: %q", version.Version)
+	}
+}
+
 func TestMutationWithoutCSRFIsRefused(t *testing.T) {
 	s := newTestServer(t, true)
 	loginRec, _ := loginAs(t, s, "alice", "secret123")

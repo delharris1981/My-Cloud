@@ -5,6 +5,8 @@ import (
 	"html/template"
 	"net/http"
 	"strings"
+
+	"github.com/derek/my-cloud/internal/version"
 )
 
 // pageData is the view model shared by every page template.
@@ -25,6 +27,12 @@ type pageData struct {
 	NeedsSetup bool
 	TwoFA      bool
 	Script     bool
+	// Version is the running build's version, shown in the UI so a bug report
+	// can name it. See internal/version.
+	Version string
+	// Commit is the short commit hash, shown alongside the version on the
+	// settings page only. Empty for a build made without the linker flags.
+	Commit string
 	// ShowHeadbar renders the top navigation. Off for the login page, which
 	// has no session to navigate with.
 	ShowHeadbar bool
@@ -80,6 +88,10 @@ func (a *App) basePage(r *http.Request, sess *authSession) pageData {
 		Selected:  map[string]bool{},
 		TwoFA:     r.URL.Query().Get("code") != "",
 		CSRFToken: "",
+		// Surfaced in the UI so a bug report can name a build rather than
+		// "whichever one happened to be running".
+		Version: version.Version,
+		Commit:  version.Commit,
 	}
 	if d.ViewMode != "list" {
 		d.ViewMode = "grid"

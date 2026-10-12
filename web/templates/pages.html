@@ -77,6 +77,10 @@
     <h2>Account</h2>
     <p class="muted">Signed in as <strong>{{.User.Username}}</strong>
       {{if .User.HasTOTP}}<span class="badge">2FA on</span>{{end}}</p>
+    <p class="muted version-detail">
+      My Cloud <strong>v{{.Version}}</strong>{{if .Commit}} ({{.Commit}}){{end}}
+      &middot; <a href="/api/version">build details</a>
+    </p>
 
     <form method="post" action="/settings/password" class="stacked-form">
       <input type="hidden" name="csrf_token" value="{{.CSRF}}">

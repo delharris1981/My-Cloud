@@ -602,3 +602,18 @@ progress { width: 10rem; }
 .toast.fade { opacity: 0; }
 
 .auth-card.wide { width: min(40rem, 92vw); }
+
+/* Version display.
+   Deliberately quiet: present enough to read and copy into a bug report,
+   quiet enough not to compete with the site name. */
+.version-badge {
+  font-size: .75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted, #8b93a7);
+  padding: .15rem .4rem;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.version-detail { font-size: .85rem; margin-top: .5rem; }
+.version-detail a { color: var(--accent, #4f8ff7); }

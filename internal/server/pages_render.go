@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/derek/my-cloud/internal/auth"
+	"github.com/derek/my-cloud/internal/version"
 	"github.com/derek/my-cloud/internal/vfs"
 	"github.com/derek/my-cloud/web"
 )
@@ -351,6 +352,10 @@ func (a *App) handleSettingsPage(w http.ResponseWriter, r *http.Request) {
 			"AppPasswords": appPws,
 			"CSRF":         sess.CSRFSecret,
 			"Sessions":     devices,
+			// The fragment renders from its own map, not from pageData, so
+			// the version has to be handed to it explicitly.
+			"Version": version.Version,
+			"Commit":  version.Commit,
 		})
 		a.render(w, http.StatusOK, "layout", d)
 	})(w, r)

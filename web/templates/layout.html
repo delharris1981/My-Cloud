@@ -41,6 +41,9 @@
   </nav>
   <div class="headbar-user">
     <span class="muted">{{.Username}}</span>
+    {{/* Always visible: a bug report should be able to name a build without
+         the reporter having to go looking for it. */}}
+    <span class="version-badge" title="My Cloud version">v{{.Version}}</span>
     <form method="post" action="/logout" class="inline">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <button class="btn ghost" type="submit">Sign out</button>
