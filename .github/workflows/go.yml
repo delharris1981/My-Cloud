@@ -19,14 +19,14 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
-
-      - name: Check the workflow files
-        run: ./scripts/check-workflows.py
         with:
           # Must be >= the `go` directive in go.mod; modernc.org/sqlite and
           # go-webauthn both require 1.26.
           go-version: '1.26'
           cache: true
+
+      - name: Check the workflow files
+        run: ./scripts/check-workflows.py
 
       - name: Check every source file is tracked
         # A source file excluded by .gitignore builds fine locally and fails

@@ -118,17 +118,22 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
-
-      - name: Check the workflow files
-        # yaml.safe_load is not enough: a step can be spliced into the middle
-        # of another step's `run:` block and the file still parses. Three such
-        # edits got through here, and one shipped `fetch-depth: 0` into a
-        # shell script where the runner tried to execute it.
-        run: ./scripts/check-workflows.py
-
         with:
           go-version: '1.26'
           cache: true
+
+      - name: Check the workflow files
+        # Two failure shapes, because neither check catches the other.
+        #
+        # A step spliced into the middle of another step's `run:` block still
+        # parses. One such edit shipped `fetch-depth: 0` into a shell script,
+        # where the runner tried to execute it.
+        #
+        # A `with:` block landing on the wrong step also parses. That one
+        # happened here, leaving actions/setup-go with no go-version and this
+        # script with inputs it ignores. It went unnoticed because the test job
+        # is skipped on every commit that touches only CI.
+        run: ./scripts/check-workflows.py
 
       - name: Check every source file is tracked
         # A source file excluded by .gitignore builds fine locally and fails
@@ -381,11 +386,11 @@ jobs:
           trap report EXIT
 
           echo "running $IMAGE"
-          docker run -d --name mc -p 18686:8686 "$IMAGE"
+          docker run -d --name mc -p 8686:8686 "$IMAGE"
 
           up=
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:18686/healthz >/dev/null 2>&1; then
+            if curl -fsS http://127.0.0.1:8686/healthz >/dev/null 2>&1; then
               up=1
               break
             fi
@@ -400,16 +405,16 @@ jobs:
 
           # The version inside the container must match the tag it was pulled
           # by, or the tag and the binary have drifted.
-          inside=$(curl -fsS http://127.0.0.1:18686/api/version | grep -o '"version": *"[^"]*"' | head -1)
+          inside=$(curl -fsS http://127.0.0.1:8686/api/version | grep -o '"version": *"[^"]*"' | head -1)
           echo "container reports $inside, expected $VERSION"
           echo "$inside" | grep -q "$VERSION" || { echo "::error::version drift"; exit 1; }
 
-          curl -fsS http://127.0.0.1:18686/api/status | grep -q '"needsSetup":true' \
+          curl -fsS http://127.0.0.1:8686/api/status | grep -q '"needsSetup":true' \
             || { echo "::error::first boot should report needsSetup:true"; exit 1; }
 
           # The deployment target is x64. The binary reports how it was built,
           # so this catches an image published for the wrong architecture.
-          platform=$(curl -fsS http://127.0.0.1:18686/api/version | tr ',' '\n' | grep '"platform"')
+          platform=$(curl -fsS http://127.0.0.1:8686/api/version | tr ',' '\n' | grep '"platform"')
           echo "container reports $platform, expected linux/amd64"
           echo "$platform" | grep -q 'linux/amd64' || { echo "::error::wrong architecture"; exit 1; }
 
