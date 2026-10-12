@@ -358,16 +358,15 @@ jobs:
         run: |
           VERSION=$(tr -d '[:space:]' < VERSION)
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$VERSION"
+          RUN_OUT=
 
-          # Every failure funnels through here. The previous version put the
-          # diagnosis in log groups *above* the error, which is where it was
-          # missed twice in a row: the last line visible was just the image
-          # summary. So the findings are emitted as ::error:: annotations too,
-          # which surface in the failure summary, and the whole block is
-          # repeated last so the tail of the log carries the answer.
+          # Every failure funnels through here. The diagnosis is printed as the
+          # tail of the step and repeated as ::error:: annotations, so it
+          # appears in the failure summary rather than only in the scrollback.
           diagnose() {
             {
               echo "reason: $1"
+              echo "docker run said: ${RUN_OUT:-(nothing — it was not reached)}"
               echo "image:  $(docker image inspect "$IMAGE" --format 'arch={{.Architecture}} entrypoint={{.Config.Entrypoint}} user={{.Config.User}}' 2>&1)"
               echo "state:  $(docker ps -a --filter name=mc --format '{{.Status}}' 2>&1)"
               echo "exit:   $(docker inspect -f '{{.State.ExitCode}}' mc 2>/dev/null || echo unknown)"
@@ -375,11 +374,15 @@ jobs:
               echo "container logs:"
               docker logs mc 2>&1 | tail -30
               echo ""
-              echo "probe:"
+              echo "probe (bypasses the entrypoint, so it chowns first to match what"
+              echo "the entrypoint does before dropping privileges):"
               docker run --rm --entrypoint /bin/sh "$IMAGE" -c '
                 echo "running as: $(id)"
                 echo "su-exec:   $(command -v su-exec || echo NOT-ON-PATH)"
                 echo "binary:    $(ls -l /app/my-cloud 2>&1)"
+                echo "volumes before chown:"
+                echo "  $(ls -ld /config /data 2>&1)"
+                chown -R 99:100 /config /data 2>&1
                 echo "config:    $(su-exec 99:100 touch /config/.probe 2>&1 && echo writable || echo NOT-WRITABLE)"
                 echo "data:      $(su-exec 99:100 touch /data/.probe 2>&1 && echo writable || echo NOT-WRITABLE)"
                 echo "version as uid 99:"
@@ -416,12 +419,27 @@ jobs:
           }
           trap report EXIT
 
+          # Ask the daemon for a free host port rather than naming one. Pinning
+          # a fixed host port made this step fail whenever anything else on the
+          # machine already had it: the container was left in "Created" and
+          # never started, which surfaced only as the server never answering.
           echo "running $IMAGE"
-          docker run -d --name mc -p 8686:8686 "$IMAGE"
+          if ! RUN_OUT=$(docker run -d --name mc -p 127.0.0.1::8686 "$IMAGE" 2>&1); then
+            RUN_OUT=$(printf '%s' "$RUN_OUT" | tr '\n' ' ')
+            diagnosed=1
+            diagnose "docker run could not start the container" > /tmp/diag.txt 2>&1 || true
+            tail -25 /tmp/diag.txt
+            announce
+            exit 1
+          fi
+
+          PORT=$(docker port mc 8686/tcp 2>/dev/null | head -1 | sed 's/.*://')
+          BASE="http://127.0.0.1:${PORT:-8686}"
+          echo "container id ${RUN_OUT}, host port $PORT"
 
           up=
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8686/healthz >/dev/null 2>&1; then
+            if curl -fsS "$BASE/healthz" >/dev/null 2>&1; then
               up=1
               break
             fi
@@ -431,7 +449,7 @@ jobs:
 
           if [ -z "$up" ]; then
             diagnosed=1
-            diagnose "the server never answered /healthz within 30s" > /tmp/diag.txt 2>&1 || true
+            diagnose "the server never answered $BASE/healthz within 30s" > /tmp/diag.txt 2>&1 || true
             tail -25 /tmp/diag.txt
             announce
             exit 1
@@ -439,16 +457,16 @@ jobs:
 
           # The version inside the container must match the tag it was pulled
           # by, or the tag and the binary have drifted.
-          inside=$(curl -fsS http://127.0.0.1:8686/api/version | grep -o '"version": *"[^"]*"' | head -1)
+          inside=$(curl -fsS "$BASE/api/version" | grep -o '"version": *"[^"]*"' | head -1)
           echo "container reports $inside, expected $VERSION"
           echo "$inside" | grep -q "$VERSION" || { echo "::error::version drift: container has $inside, tag says $VERSION"; exit 1; }
 
-          curl -fsS http://127.0.0.1:8686/api/status | grep -q '"needsSetup":true' \
+          curl -fsS "$BASE/api/status" | grep -q '"needsSetup":true' \
             || { echo "::error::first boot should report needsSetup:true"; exit 1; }
 
           # The deployment target is x64. The binary reports how it was built,
           # so this catches an image published for the wrong architecture.
-          platform=$(curl -fsS http://127.0.0.1:8686/api/version | tr ',' '\n' | grep '"platform"')
+          platform=$(curl -fsS "$BASE/api/version" | tr ',' '\n' | grep '"platform"')
           echo "container reports $platform, expected linux/amd64"
           echo "$platform" | grep -q 'linux/amd64' || { echo "::error::wrong architecture: $platform"; exit 1; }
 
