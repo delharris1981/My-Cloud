@@ -39,8 +39,14 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.26'
           cache: true
+
+      - name: Check every source file is tracked
+        # A source file excluded by .gitignore builds fine locally and fails
+        # only in CI, because a fresh checkout does not have it. This caught
+        # internal/config/ being swallowed by an unanchored "config/" pattern.
+        run: ./scripts/check-tracked.sh
 
       - name: Verify CGO stays disabled
         # modernc.org/sqlite is pure Go precisely so the release binary is
@@ -197,7 +203,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.26'
       - name: Install rclone
         run: |
           curl -sO https://downloads.rclone.org/rclone-current-linux-amd64.zip

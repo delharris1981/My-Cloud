@@ -1,6 +1,6 @@
 module github.com/derek/my-cloud
 
-go 1.27.2
+go 1.26.0
 
 require (
 	github.com/go-webauthn/webauthn v0.18.2

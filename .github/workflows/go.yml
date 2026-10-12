@@ -20,9 +20,16 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          # Go 1.22+ is required for method-aware ServeMux patterns.
-          go-version: '1.24'
+          # Must be >= the `go` directive in go.mod; modernc.org/sqlite and
+          # go-webauthn both require 1.26.
+          go-version: '1.26'
           cache: true
+
+      - name: Check every source file is tracked
+        # A source file excluded by .gitignore builds fine locally and fails
+        # only in CI, because a fresh checkout does not have it. This caught
+        # internal/config/ being swallowed by an unanchored "config/" pattern.
+        run: ./scripts/check-tracked.sh
 
       - name: Verify CGO stays disabled
         # modernc.org/sqlite is pure Go precisely so the release binary is

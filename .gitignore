@@ -1,12 +1,19 @@
-# node_modules at any level: OLD/ is the archived Node app and would
-# otherwise have its dependencies committed.
+# Runtime volume directories.
+#
+# These are anchored with a leading slash on purpose. An unanchored `config/`
+# matches any directory named config at any depth, which silently swallowed
+# internal/config/ — the package the whole server is built on. That broke the
+# build only in CI, where the omission is invisible locally.
+/config/
+/data/
+/dev-config/
+/dev-data/
+
+# Dependencies
 node_modules/
 npm-debug.log*
 
-dev-config/
-dev-data/
-config/
-data/
+# Logs and editor noise
 *.log
 .DS_Store
 
