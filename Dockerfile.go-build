@@ -22,9 +22,10 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 COPY web ./web
-# VERSION and the build script are needed to stamp the binary.
+# VERSION is needed to stamp the binary. Nothing else: the version is applied
+# inline below rather than by calling scripts/build.sh, so scripts/ is not part
+# of the build context (and .dockerignore keeps it out).
 COPY VERSION ./VERSION
-COPY scripts ./scripts
 
 # The version is stamped from the VERSION file, so the image tag, the git tag,
 # and `my-cloud --version` inside the container cannot drift apart.
