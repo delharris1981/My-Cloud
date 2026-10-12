@@ -95,11 +95,12 @@ jobs:
           # Recorded either way. A silent skip is how CI rots: the next person
           # to look sees green and cannot tell whether the tests ran.
           {
-            echo "### Test suite"
+            echo "### Verification"
             if [ "$core" = "true" ]; then
-              echo "Ran in full."
+              echo "Test suite and WebDAV conformance both ran."
             else
-              echo "**Skipped.** Nothing under \`cmd/\`, \`internal/\`, \`web/\`, or the module files changed."
+              echo "**Both skipped.** Nothing under \`cmd/\`, \`internal/\`, \`web/\`, or the module files changed,
+              so the server is identical to the last one that passed."
               echo ""
               sed 's/^/- /' /tmp/changed.txt
             fi
@@ -290,6 +291,14 @@ jobs:
   webdav-conformance:
     # The plan names hand-rolled WebDAV edge cases as a risk and says to test
     # against real clients. rclone is what users actually mount with.
+    #
+    # Gated on the same detect job as the unit suite: it drives a real server
+    # built from this commit, so if nothing under cmd/, internal/, or web/
+    # changed, the server it would exercise is identical to the last one that
+    # passed. Installing rclone and round-tripping files buys nothing for a
+    # docs or compose edit.
+    needs: detect
+    if: needs.detect.outputs.core_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
