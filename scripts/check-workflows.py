@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
-"""Structural validation for the workflow files.
+"""Structural validation for the workflow files, using only the standard library.
 
-yaml.safe_load is not enough. A workflow can parse cleanly and still be broken,
-because the damage happens *inside* a `run: |` literal block: nothing is
-invalid YAML, the shell script simply contains half a step. Three separate
-edits to the Gitea workflow did exactly this, and all three passed every
-YAML parse — including the one in CI, which is why they reached a runner.
+Deliberately not PyYAML. The first version of this script imported yaml, which
+is not installed on the runner's container — so the check meant to catch a
+broken workflow failed on the very first thing it did.
 
-The third of those spliced `with:` and `fetch-depth: 0` into a run block, and
-the runner executed:
+More to the point, a YAML parser is the wrong tool for this job. The damage
+this catches happens *inside* a `run: |` literal block: nothing is invalid
+YAML, the shell script simply contains half a neighbouring step. Three separate
+edits to the Gitea workflow did exactly that, all passed every yaml.safe_load —
+including the one in CI — and one of them shipped:
 
     ./scripts/check-docker-base.sh Dockerfile.go-build with:
     ...
     fetch-depth: 0        -> fetch-depth:: command not found
 
-So the check that matters is not "is this YAML valid" but "does every step
-look like a step, and does every run block look like a shell script".
+So rather than parse the document into a tree and inspect it, this reads the
+text and asks the question that matters: does any block scalar contain a line
+that is plainly a YAML key?
 
 Run: scripts/check-workflows.py
 """
@@ -23,99 +25,114 @@ import re
 import sys
 from pathlib import Path
 
-import yaml
+# Keys that begin a step, a job, or a common `with:` block. None of these is
+# ever the first word of a shell line, so finding one inside a `run:` block
+# means a neighbouring step's body was spliced in.
+STEP_KEYS = frozenset("""
+    uses run name with env if needs id steps jobs on permissions
+    runs-on outputs defaults concurrency timeout-minutes continue-on-error
+    container services working-directory shell
+    fetch-depth registry username password platform platforms push
+    provenance sbom tags build-args cache-from cache-to context file
+    labels go-version packages ref submodules path persist-credentials
+    architectures fail-on-unmatched paths
+""".split())
 
-# Keys that may legitimately start a line inside a `run:` block. Nothing here
-# is ever a YAML key at the start of a shell line, so seeing one means a
-# neighbouring step's body was spliced in.
-STEP_KEYS = {
-    "uses", "run", "name", "with", "env", "if", "needs", "id", "steps",
-    "jobs", "on", "permissions", "container", "services", "runs-on",
-    "outputs", "defaults", "concurrency", "timeout-minutes",
-    # keys that appear in `with:` blocks and are the usual splice payload
-    "fetch-depth", "registry", "username", "password", "platforms", "push",
-    "provenance", "sbom", "tags", "build-args", "cache-from", "cache-to",
-    "context", "file", "labels", "go-version", "packages",
-}
+BLOCK_KEY = re.compile(r"^(\s*)([A-Za-z0-9_.-]+):\s*[|>][-+0-9]*\s*$")
+KEY_LINE = re.compile(r"^(\s*)([A-Za-z][A-Za-z0-9_-]*):(\s|$)")
 
-STEP_LINE = re.compile(r"^(\s*)([A-Za-z][A-Za-z0-9_-]*):(\s|$)")
-
-problems = []
+# A heredoc or multi-line string inside a script could legitimately contain a
+# line like this. Nothing in these workflows does, and tracking heredocs would
+# mean tracking quoting rules in a checker that exists to stay simple.
+MAX_CONSECUTIVE_BLANKS = 2
 
 
-def check_run_block(job: str, index: int, name: str, script: str) -> None:
-    for lineno, line in enumerate(script.splitlines(), 1):
-        m = STEP_LINE.match(line)
+def check_file(path: Path, rel: str) -> list:
+    problems = []
+    lines = path.read_text().splitlines()
+
+    if not any(l.rstrip() == "jobs:" for l in lines):
+        problems.append(f"{rel}: no top-level 'jobs:' key")
+
+    in_block = False
+    block_indent = 0
+    block_key = ""
+    block_start = 0
+    blanks = 0
+
+    for n, line in enumerate(lines, 1):
+        if not in_block:
+            m = BLOCK_KEY.match(line)
+            if not m:
+                continue
+            in_block = True
+            block_indent = len(m.group(1))
+            block_key = m.group(2)
+            block_start = n
+            blanks = 0
+            continue
+
+        # Inside a block scalar until a non-blank line dedents to <= the key.
+        if not line.strip():
+            blanks += 1
+            if blanks > MAX_CONSECUTIVE_BLANKS and in_block:
+                # A run block with a big gap of blanks is still a run block,
+                # but an unusually long one is worth knowing about.
+                pass
+            continue
+        blanks = 0
+
+        indent = len(line) - len(line.lstrip())
+        if indent <= block_indent:
+            in_block = False
+            continue
+
+        # Only a shell block can be spliced into. `name:` and `if:` blocks are
+        # prose; a colon in them is ordinary.
+        if block_key != "run":
+            continue
+
+        m = KEY_LINE.match(line)
         if not m:
             continue
         key = m.group(2)
-        if key in STEP_KEYS:
-            problems.append(
-                f"{job}: step {index} ({name!r}) line {lineno} of its run block "
-                f"starts with {key!r}: {line.strip()!r}\n"
-                f"    A YAML key inside a shell script means another step's body "
-                f"was spliced in. The runner will try to execute it as a command."
-            )
-
-
-def check_workflow(path: Path) -> None:
-    doc = yaml.safe_load(path.read_text())
-    if not isinstance(doc, dict):
-        problems.append(f"{path}: top level is {type(doc).__name__}, expected a mapping")
-        return
-    if "jobs" not in doc:
-        problems.append(f"{path}: no 'jobs' key")
-        return
-    # 'on' parses as the boolean True in YAML 1.1, so accept either spelling.
-    if True not in doc and "on" not in doc:
-        problems.append(f"{path}: no 'on' trigger")
-
-    for job_name, job in doc["jobs"].items():
-        if not isinstance(job, dict):
-            problems.append(f"{path}:{job_name}: job is {type(job).__name__}, expected a mapping")
+        if key not in STEP_KEYS:
             continue
-        if "runs-on" not in job:
-            problems.append(f"{path}:{job_name}: no 'runs-on'")
-        steps = job.get("steps")
-        if not isinstance(steps, list) or not steps:
-            problems.append(f"{path}:{job_name}: no steps")
-            continue
+        problems.append(
+            f"{rel}:{n}: the run block starting at line {block_start} contains "
+            f"what looks like a YAML key\n"
+            f"      {line.strip()!r}\n"
+            f"    Usually a step body spliced into this shell script, which the "
+            f"runner will try to execute.\n"
+            f"    The one case this cannot tell apart is a heredoc carrying YAML "
+            f"as data. None of these workflows does that."
+        )
 
-        for i, step in enumerate(steps):
-            if not isinstance(step, dict):
-                problems.append(f"{path}:{job_name}: step {i} is not a mapping")
-                continue
-            has_uses, has_run = "uses" in step, "run" in step
-            if has_uses and has_run:
-                problems.append(f"{path}:{job_name}: step {i} has both 'uses' and 'run'")
-            if not has_uses and not has_run:
-                problems.append(f"{path}:{job_name}: step {i} has neither 'uses' nor 'run'")
-            label = step.get("name") or step.get("uses") or f"#{i}"
-            if has_run:
-                if not isinstance(step["run"], str):
-                    problems.append(f"{path}:{job_name}: step {i} 'run' is {type(step['run']).__name__}, expected a string")
-                else:
-                    check_run_block(f"{path}:{job_name}", i, label, step["run"])
+    return problems
 
 
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
     files = sorted(
-        p for p in list(root.glob(".gitea/workflows/*.yml")) + list(root.glob(".github/workflows/*.yml"))
+        list(root.glob(".gitea/workflows/*.yml")) + list(root.glob(".github/workflows/*.yml"))
     )
     if not files:
         print("error: no workflow files found", file=sys.stderr)
         return 1
 
+    problems = []
     for f in files:
+        rel = str(f.relative_to(root))
         try:
-            check_workflow(f)
-            print(f"  ✓ {f.relative_to(root)}")
-        except Exception as exc:  # a parse error is itself a finding
-            problems.append(f"{f}: could not be parsed: {exc}")
+            found = check_file(f, rel)
+        except Exception as exc:
+            problems.append(f"{rel}: could not be read: {exc}")
+            found = []
+        problems.extend(found)
+        print(f"  {'✗' if found else '✓'} {rel}")
 
     if problems:
-        print()
+        print(file=sys.stderr)
         for p in problems:
             print(f"  ✗ {p}", file=sys.stderr)
         print(f"\n{len(problems)} structural problem(s).", file=sys.stderr)
