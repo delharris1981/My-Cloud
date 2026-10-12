@@ -22,7 +22,11 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # The GHCR package path. This must be the *GitHub* owner and repo, because
+  # that is where the package lives: ${{ github.repository }} inside Gitea
+  # would resolve to the Gitea mirror's path, which is not necessarily the
+  # same. Change this if the GitHub repository is ever renamed or forked.
+  IMAGE_NAME: delharris1981/my-cloud
 
 jobs:
   test:
@@ -161,7 +165,7 @@ jobs:
             org.opencontainers.image.description=Self-hosted file sharing with plain files on disk
             org.opencontainers.image.version=${{ steps.meta.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.source=https://github.com/${{ env.IMAGE_NAME }}
           provenance: true
           sbom: true
           cache-from: type=gha

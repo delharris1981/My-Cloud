@@ -1,16 +1,36 @@
-# Go build of My Cloud. The Node build's compose file is docker-compose.node.yml
-# and remains the production configuration until cutover.
+# My Cloud — Go build, pulled from GitHub Container Registry.
+#
+# The image is built and published by the Gitea workflow
+# (.gitea/workflows/docker.yml) as part of the GitHub → Gitea mirror, so the
+# registry is GitHub's even though the build happens on Gitea.
 #
 #   docker compose up -d
 #
+# Check what you are running:
+#
+#   docker compose exec my-cloud /app/my-cloud --version
+#
+# The archived Node build, kept as the rollback target, is
+# docker-compose.node.yml.
 services:
   my-cloud:
-    build:
-      context: .
-      dockerfile: Dockerfile.go-build
+    # Pinned to an exact version rather than `latest`. `latest` only moves when
+    # a release happens, so it is safe, but pinning means a restart never
+    # silently changes what you are running. To follow releases instead:
+    #
+    #   MYCLOUD_TAG=latest docker compose up -d
+    #
+    # Tags published for a release of X.Y.Z:
+    #   X.Y.Z        the exact release
+    #   X.Y          newest patch in that line
+    #   X            newest release in that major line
+    #   latest       the highest version ever released
+    image: ghcr.io/delharris1981/my-cloud:${MYCLOUD_TAG:-2.0.0}
+
     container_name: my-cloud
     ports:
       - "8686:8686"
+
     environment:
       # File ownership for created files (defaults are Unraid's nobody:users).
       - PUID=99
@@ -19,9 +39,39 @@ services:
       # Behind a TLS-terminating proxy that does not forward X-Forwarded-Proto,
       # set this to add the Secure flag to the session cookie:
       # - MYCLOUD_FORCE_SECURE_COOKIE=1
+
     volumes:
-      # Settings, the SQLite database, and the encryption root key.
+      # Settings, the SQLite database, and secret.key (the encryption root).
+      # secret.key is load-bearing: losing it means re-enrolling 2FA and
+      # breaking password-protected share links. Back this directory up.
       - ./config:/config
       # Your files live here: /data/users/<username>/files
       - ./data:/data
+
     restart: unless-stopped
+
+    # The image already declares a HEALTHCHECK; this restarts the container if
+    # the server wedges rather than merely reporting unhealthy forever.
+    # healthcheck:
+    #   test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8686/healthz"]
+    #   interval: 60s
+    #   timeout: 5s
+    #   retries: 3
+    #   start_period: 15s
+
+# ---------------------------------------------------------------------------
+# Building from source instead
+#
+# For local development, or to build an image yourself rather than pulling the
+# published one, replace the `image:` line above with:
+#
+#   build:
+#     context: .
+#     dockerfile: Dockerfile.go-build
+#
+# Private registries
+#
+# If the GHCR package is private, authenticate once before the first pull:
+#
+#   echo "$GHCR_TOKEN" | docker login ghcr.io -u delharris1981 --password-stdin
+#

@@ -46,7 +46,7 @@ Everything is stored as plain files:
 
    ```bash
    wget -O /boot/config/plugins/dockerMan/templates-user/my-My-Cloud.xml \
-     https://raw.githubusercontent.com/evilgenius79/My-Cloud/main/templates/my-cloud.xml
+     https://raw.githubusercontent.com/delharris1981/My-Cloud/main/templates/my-cloud.xml
    ```
 2. Map:
    - **`/config`** → `/mnt/user/appdata/my-cloud` (settings, users, shares)
@@ -56,20 +56,43 @@ Everything is stored as plain files:
 
 ## Quick start (Docker / docker-compose)
 
+The image is published to GitHub Container Registry:
+
 ```bash
-git clone https://github.com/evilgenius79/My-Cloud.git
+git clone https://github.com/delharris1981/My-Cloud.git
 cd My-Cloud
-docker compose up -d --build
+docker compose up -d
 # open http://localhost:8686
 ```
 
-## Quick start (bare Node.js)
-
-Requires Node 18+.
+That pulls `ghcr.io/delharris1981/my-cloud`, pinned to the version in the
+`image:` line. To follow releases instead:
 
 ```bash
-npm install
-npm run dev        # stores state in ./dev-config and ./dev-data
+MYCLOUD_TAG=latest docker compose up -d
+```
+
+To build from source rather than pulling, replace the `image:` line in
+`docker-compose.go.yml` with the `build:` block documented at the bottom of
+that file.
+
+Check what you are actually running:
+
+```bash
+docker compose exec my-cloud /app/my-cloud --version
+```
+
+If the GHCR package is private, authenticate once first:
+
+```bash
+echo "$GHCR_TOKEN" | docker login ghcr.io -u delharris1981 --password-stdin
+```
+
+## Quick start (bare Go)
+
+```bash
+go build -o my-cloud ./cmd/my-cloud
+MYCLOUD_CONFIG_DIR=./dev-config MYCLOUD_DATA_DIR=./dev-data ./my-cloud
 # open http://localhost:8686
 ```
 

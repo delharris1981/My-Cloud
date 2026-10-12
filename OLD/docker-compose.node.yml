@@ -1,25 +1,27 @@
-# Node build of My Cloud — the current production image. Kept as the rollback
-# target during the strangler rollout; see docker-compose.go.yml for the Go
-# build.
+# My Cloud — the archived Node build, pulled from GHCR.
 #
-#   docker compose up -d
+# This is the rollback target. It is no longer developed: the Node
+# implementation is frozen under OLD/ and the Go rewrite in the repository root
+# replaces it. See docker-compose.go.yml for the current build.
 #
+#   docker compose -f OLD/docker-compose.node.yml up -d
+#
+# Switching between the two is a change of image tag. Both read the same
+# /config and /data, so there is nothing to migrate in either direction: the Go
+# server imports the Node data on first boot and renames the originals to
+# .migrated.bak.
 services:
   my-cloud:
-    build:
-      context: .
-      dockerfile: Dockerfile.node
+    image: ghcr.io/delharris1981/my-cloud:${MYCLOUD_NODE_TAG:-node-latest}
     container_name: my-cloud-node
     ports:
-      - "8686:8686"
+      # Offset so both can run side by side during a strangler rollout.
+      - "8687:8686"
     environment:
-      # File ownership for created files (defaults are Unraid's nobody:users).
       - PUID=99
       - PGID=100
       - UMASK=022
     volumes:
-      # App settings, users, shares (tiny JSON files)
       - ./config:/config
-      # Your files live here: /data/users/<username>/files
       - ./data:/data
     restart: unless-stopped

@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<!--
+  Unraid template for the Go build of My Cloud.
+
+  Copy to /boot/config/plugins/dockerMan/templates-user/ and save as
+  my-My-Cloud.xml — Unraid strips the "my-" prefix and uses it to label the
+  entry in the Add Container dropdown.
+
+  Install from Community Applications once published.
+-->
+<Container version="2">
+  <Name>My-Cloud</Name>
+  <Repository>ghcr.io/delharris1981/my-cloud:2.0.0</Repository>
+  <Registry>https://ghcr.io/delharris1981/my-cloud</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/delharris1981/My-Cloud/issues</Support>
+  <Project>https://github.com/delharris1981/My-Cloud</Project>
+  <TemplateURL>https://raw.githubusercontent.com/delharris1981/My-Cloud/main/templates/my-cloud.xml</TemplateURL>
+  <Overview>My Cloud is a lightweight file sharing platform in the spirit of Nextcloud/ownCloud, but with no external database. Multi-user accounts, a web file browser with previews, resumable uploads, public share links with passwords and expiry, a trash bin, quotas, WebDAV, and optional two-factor authentication. User files stay as ordinary files on your array - browse them with any other tool, back them up with rsync, nothing is locked inside a database blob.</Overview>
+  <Category>Cloud: Productivity: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8686]/</WebUI>
+  <Icon>https://raw.githubusercontent.com/delharris1981/My-Cloud/main/OLD/public/icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <DonateText/>
+  <DonateLink/>
+  <Description>Lightweight file sharing with plain files on disk. On first launch, open the WebUI to create your admin account. User files are stored under the Data path at users/&lt;username&gt;/files, so they stay browseable from any Unraid share tool. Accounts and share links live in a small SQLite database in the Config path; back that directory up as well, since it holds secret.key (the encryption root for 2FA secrets and share passwords).</Description>
+  <Config Name="WebUI Port" Target="8686" Default="8686" Mode="tcp" Description="Port for the web interface" Type="Port" Display="always" Required="true" Mask="false">8686</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/my-cloud" Mode="rw" Description="Settings, the SQLite database, and secret.key. Back this up." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/my-cloud</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/my-cloud" Mode="rw" Description="Where user files are stored (users/&lt;username&gt;/files)" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/my-cloud</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID that owns created files (Unraid default: 99 = nobody)" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID that owns created files (Unraid default: 100 = users)" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="UMASK" Target="UMASK" Default="022" Mode="" Description="Permission umask for created files" Type="Variable" Display="advanced" Required="false" Mask="false">022</Config>
+</Container>
